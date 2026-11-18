@@ -327,11 +327,30 @@ async function viewToday(el) {
   $('#refl').onclick = () => openAddLead(() => viewToday(el));
 }
 
+const skipped = [];
 async function callNext() {
-  const { data } = await sb.from('leads').select('*').eq('assigned_to', S.profile.id).eq('status', 'new')
-    .order('assigned_at').order('id').limit(1);
-  if (!data || !data.length) return toast('No new leads left');
-  startCall(data[0]);
+  let q = sb.from('leads').select('*').eq('assigned_to', S.profile.id).eq('status', 'new').order('assigned_at').order('id').limit(1);
+  if (skipped.length) q = q.not('id', 'in', `(${skipped.join(',')})`);
+  const { data } = await q;
+  if (!data || !data.length) { skipped.length = 0; return toast('No new leads left'); }
+  showCallCard(data[0], true);
+}
+// shows who is about to be called (name, number, society, details) before dialing
+function showCallCard(l, fromQueue) {
+  const ex = l.extra && typeof l.extra === 'object' ? Object.entries(l.extra).filter(([, v]) => v !== null && v !== '') : [];
+  openSheet(`<div class="note" style="text-align:center">${fromQueue ? 'Next customer to call' : 'Call this customer'}</div>
+    <div style="text-align:center;margin:6px 0 2px;font-size:24px;font-weight:800">${esc(l.name || 'No name')}</div>
+    <div style="text-align:center;font-size:22px;font-weight:700;letter-spacing:.5px">${esc(l.phone)}</div>
+    ${l.place ? `<div style="text-align:center;margin-top:6px">📍 <b>${esc(l.place)}</b></div>` : ''}
+    ${l.project ? `<div class="note" style="text-align:center">Project: ${esc(l.project)}</div>` : ''}
+    ${ex.length ? `<div class="card" style="margin-top:10px">${ex.map(([k, v]) => `<div class="note"><b>${esc(k)}:</b> ${esc(String(v))}</div>`).join('')}</div>` : ''}
+    ${l.last_note ? `<div class="note" style="margin-top:6px">Note: ${esc(l.last_note)}</div>` : ''}
+    <button class="btn gold block" style="margin-top:12px;font-size:18px" id="cc-dial">📞 Dial now</button>
+    ${fromQueue ? '<button class="btn ghost block sm" style="margin-top:8px" id="cc-skip">Skip this one</button>' : ''}
+    <button class="btn ghost block sm" style="margin-top:8px" id="cc-x">Close</button>`);
+  $('#cc-dial').onclick = () => { closeSheet(); startCall(l); };
+  if (fromQueue) $('#cc-skip').onclick = () => { skipped.push(l.id); closeSheet(); callNext(); };
+  $('#cc-x').onclick = closeSheet;
 }
 
 // ---------- Leads list ----------
@@ -457,7 +476,7 @@ async function openLead(l) {
     if (error) return toast(error.message);
     closeSheet(); toast('Lead deleted'); renderShell();
   };
-  $('#dial').onclick = () => { closeSheet(); startCall(l); };
+  $('#dial').onclick = () => { closeSheet(); showCallCard(l, false); };
   $('#logm').onclick = () => openDisposition(l);
   $('#shp').onclick = () => shareProject(l);
   $('#wa').onclick = () => openWhatsApp(l);
@@ -813,7 +832,7 @@ function showRing(l) {
     <button class="btn gold block" id="rpick" style="margin-top:18px;font-size:20px;padding:16px">📞 Pick up &amp; call now</button>
     <button class="btn ghost block" id="rlater" style="color:#fff;border-color:#fff">Later</button></div>`);
   ringOnce(); ringTimer = setInterval(ringOnce, 2200);
-  $('#rpick').onclick = () => { stopRing(); S.tab = 'today'; renderShell(); startCall(l); };
+  $('#rpick').onclick = () => { stopRing(); S.tab = 'today'; renderShell(); showCallCard(l, false); };
   $('#rlater').onclick = () => { stopRing(); if (S.tab === 'today') renderShell(); };
 }
 async function checkOnlineLeads() {
