@@ -831,20 +831,27 @@ function openAddLead(done) {
 
 // ---------- Team (admin) ----------
 async function viewDisposed(el) {
-  const f = { agent: '', range: 'today', outcome: '' };
+  const f = { agent: '', range: 'today', outcome: '', from: '', to: '' };
   const ag = S.agents.filter(isAgent);
   el.innerHTML = `<h2>Disposed leads</h2><div class="note">Leads your agents closed as not interested or wrong number, with their reasons.</div>
   <select id="da" style="margin-top:8px"><option value="">All agents</option>${ag.map((a) => `<option value="${a.id}">${esc(a.full_name || a.email)}</option>`).join('')}</select>
-  <div class="chips" id="dr" style="margin-top:8px">${[['today', 'Today'], ['yest', 'Yesterday'], ['week', 'Last 7 days'], ['all', 'All time']].map(([k, v]) => `<button class="chip" data-k="${k}">${v}</button>`).join('')}</div>
+  <div class="chips" id="dr" style="margin-top:8px">${[['today', 'Today'], ['yest', 'Yesterday'], ['week', 'Last 7 days'], ['month', 'Last 30 days'], ['custom', 'Custom dates'], ['all', 'All time']].map(([k, v]) => `<button class="chip" data-k="${k}">${v}</button>`).join('')}</div>
+  <div id="cw" class="row" style="display:none;margin-top:8px"><div style="flex:1"><label>From</label><input id="cf" type="date"></div><div style="flex:1"><label>To</label><input id="ct" type="date"></div></div>
   <div class="chips" id="do" style="margin-top:8px">${[['', 'Both'], ['not_interested', 'Not interested'], ['wrong_number', 'Wrong number']].map(([k, v]) => `<button class="chip" data-k="${k}">${v}</button>`).join('')}</div>
   <div id="dsum" class="note" style="margin:8px 0"></div><div id="dl"></div>`;
   const range = () => {
     const t = startOfToday(), d = (n) => new Date(t.getTime() + n * 864e5);
-    return { today: [t, d(1)], yest: [d(-1), t], week: [d(-6), d(1)], all: [new Date(2020, 0, 1), d(1)] }[f.range];
+    if (f.range === 'custom') {
+      const a = f.from ? new Date(f.from + 'T00:00:00') : new Date(2020, 0, 1);
+      const b = f.to ? new Date(new Date(f.to + 'T00:00:00').getTime() + 864e5) : d(1);
+      return [a, b];
+    }
+    return { today: [t, d(1)], yest: [d(-1), t], week: [d(-6), d(1)], month: [d(-29), d(1)], all: [new Date(2020, 0, 1), d(1)] }[f.range];
   };
   const load = async () => {
     document.querySelectorAll('#dr .chip').forEach((c) => c.classList.toggle('on', c.dataset.k === f.range));
     document.querySelectorAll('#do .chip').forEach((c) => c.classList.toggle('on', c.dataset.k === f.outcome));
+    $('#cw').style.display = f.range === 'custom' ? 'flex' : 'none';
     $('#dl').innerHTML = '<div class="empty">Loading…</div>';
     const [a, b] = range();
     const { data, error } = await sb.rpc('disposed_calls', { p_agent: f.agent || null, p_from: a.toISOString(), p_to: b.toISOString() });
@@ -860,6 +867,8 @@ async function viewDisposed(el) {
     el.querySelectorAll('[data-v]').forEach((b) => (b.onclick = async () => { const { error: e } = await sb.rpc('verify_call', { p_id: Number(b.dataset.v) }); if (e) return toast(e.message); toast('Verified'); load(); }));
     el.querySelectorAll('[data-r]').forEach((b) => (b.onclick = async () => { if (!confirm('Put this lead back in the agent’s new queue?')) return; const { error: e } = await sb.rpc('reopen_lead', { p_lead: Number(b.dataset.r) }); if (e) return toast(e.message); toast('Lead re-opened'); load(); }));
   };
+  $('#cf').onchange = (e) => { f.from = e.target.value; load(); };
+  $('#ct').onchange = (e) => { f.to = e.target.value; load(); };
   $('#da').onchange = (e) => { f.agent = e.target.value; load(); };
   document.querySelectorAll('#dr .chip').forEach((c) => (c.onclick = () => { f.range = c.dataset.k; load(); }));
   document.querySelectorAll('#do .chip').forEach((c) => (c.onclick = () => { f.outcome = c.dataset.k; load(); }));
