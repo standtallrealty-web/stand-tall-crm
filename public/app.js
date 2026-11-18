@@ -133,7 +133,7 @@ function renderShell() {
   $('#pw').onclick = openChangePassword;
   renderPushBar();
   document.querySelectorAll('nav.bottom button').forEach((b) => (b.onclick = () => { S.tab = b.dataset.t; renderShell(); }));
-  const v = { today: viewToday, leads: viewLeads, stats: viewDash, dash: viewDash, import: viewImport, dist: viewDist, team: viewTeam, disp: viewDisposed, proj: viewProjects }[S.tab];
+  const v = { today: viewToday, leads: viewLeads, stats: viewDash, dash: viewDash, import: viewImport, dist: viewDist, team: viewTeam, disp: viewDisposed, appr: viewApprovals, proj: viewProjects }[S.tab];
   v($('#view'));
 }
 const refresh = () => renderShell();
@@ -275,13 +275,14 @@ const LEAD_SELECT = '*, agent:profiles!assigned_to(full_name,agent_code)';
 async function viewToday(el) {
   el.innerHTML = '<div class="empty">Loading…</div>';
   const me = S.profile.id;
-  const [due, fresh, today, online, files, ds] = await Promise.all([
+  const [due, fresh, today, online, files, ds, subs] = await Promise.all([
     sb.from('leads').select(LEAD_SELECT).eq('assigned_to', me).lte('next_followup', endOfToday().toISOString()).order('next_followup').limit(200),
     sb.from('leads').select('id', { count: 'exact', head: true }).eq('assigned_to', me).eq('status', 'new'),
     sb.from('calls').select('id', { count: 'exact', head: true }).eq('agent_id', me).gte('called_at', startOfToday().toISOString()),
     sb.from('leads').select(LEAD_SELECT).eq('assigned_to', me).eq('batch', 'auto').eq('status', 'new').eq('call_count', 0).order('assigned_at', { ascending: false }).limit(50),
     sb.rpc('my_files'),
     sb.rpc('day_stats', { p_since: startOfToday().toISOString() }),
+    sb.from('lead_submissions').select('*').eq('agent_id', me).order('created_at', { ascending: false }).limit(8),
   ]);
   const mine = (ds.data || []).find((x) => x.agent_id === me) || {};
   const dialed = Number(mine.dialed || 0), conn = Number(mine.connected || 0);
@@ -299,11 +300,14 @@ async function viewToday(el) {
   <div class="grid"><div class="stat"><b>${dialed}</b><small>Calls dialed today</small></div><div class="stat"><b>${fresh.count || 0}</b><small>New leads left</small></div></div>
   ${fl.length ? `<h2>📁 My calling files</h2>${fl.map((x) => { const t = Number(x.total), c = Number(x.called), pct = t ? Math.round((c / t) * 100) : 0; return `<div class="card"><b>${esc(x.batch)}</b><div class="note">${c} called · ${t - c} left of ${t}</div><div style="height:8px;background:#e8edf3;border-radius:6px;margin-top:6px;overflow:hidden"><div style="height:8px;width:${pct}%;background:var(--green,#2e9e63)"></div></div></div>`; }).join('')}` : ''}
   ${onl.length ? `<h2>📣 New online leads (${onl.length}) · call these first</h2>${onl.map(leadCard).join('')}` : ''}
+  <button class="btn ghost block sm" id="refl" style="margin-bottom:8px">＋ Add my own lead (referral)</button>
+  ${(subs.data || []).filter((x) => x.status !== 'approved' || Date.now() - new Date(x.decided_at) < 864e5 * 2).length ? `<h2>📝 My referral leads</h2>${(subs.data || []).filter((x) => x.status !== 'approved' || Date.now() - new Date(x.decided_at) < 864e5 * 2).map((x) => `<div class="card"><b>${esc(x.name || x.phone)}</b> · ${esc(x.phone)}<div class="note">${x.status === 'pending' ? '⏳ Waiting for admin approval' : x.status === 'approved' ? '✅ Approved. It is in your list now' : '❌ Rejected' + (x.reject_reason ? ': ' + esc(x.reject_reason) : '')}</div></div>`).join('')}` : ''}
   <button class="btn gold block" id="next">▶ Call next new lead</button>
   <h2>Follow-ups due (${leads.length})</h2>
   ${leads.length ? leads.map(leadCard).join('') : '<div class="empty">No follow-ups due. Good job! 🎉</div>'}`;
   bindLeadCards(el, leads.concat(onl));
   $('#next').onclick = callNext;
+  $('#refl').onclick = () => openAddLead(() => viewToday(el));
 }
 
 async function callNext() {
@@ -554,13 +558,15 @@ async function viewDash(el) {
     $('#bk').onclick = goBooked;
     return;
   }
+  const pend = (await sb.from('lead_submissions').select('id', { count: 'exact', head: true }).eq('status', 'pending')).count || 0;
   const unassigned = agg(null).total, total = rows.reduce((s, x) => s + Number(x.n), 0);
   const ag = S.agents.filter(isAgent);
-  el.innerHTML = `<div class="grid"><div class="stat"><b>${total}</b><small>Total leads</small></div><div class="stat"><b>${unassigned}</b><small>Unassigned</small></div>
+  el.innerHTML = `${pend ? `<div class="card" id="pap" style="cursor:pointer;border:1px solid #e0bb73;text-align:center"><b>📝 ${pend} lead${pend > 1 ? 's' : ''} waiting for your approval</b><div class="note">Tap to review</div></div>` : ''}<div class="grid"><div class="stat"><b>${total}</b><small>Total leads</small></div><div class="stat"><b>${unassigned}</b><small>Unassigned</small></div>
   <div class="stat" id="bk" style="cursor:pointer;border:1px solid #e0bb73;grid-column:span 2"><b>${rows.filter((x) => x.status === 'booked').reduce((t, x) => t + Number(x.n), 0)}</b><small>✅ Booked clients (tap to see the list)</small></div></div>
   <div class="tablewrap"><table><tr><th>Agent</th><th>Leads</th><th>New</th><th>Connected (of ${TARGET_CONN})</th><th>Interested</th><th>Call back</th><th>Site visit</th><th>Booked</th><th>Not int.</th><th>Hot</th><th>Warm</th></tr>
   ${ag.map((a) => { const x = agg(a.id); return `<tr><td>${esc(a.full_name || a.email)}</td><td>${x.total}</td><td>${x.new}</td><td><b>${((dsx.find((d) => d.agent_id === a.id) || {}).connected) || 0}</b></td><td>${x.interested}</td><td>${x.call_back}</td><td>${x.site_visit}</td><td>${x.booked}</td><td>${x.not_interested}</td><td>${x.hot}</td><td>${x.warm}</td></tr>`; }).join('')}</table></div>`;
   $('#bk').onclick = goBooked;
+  if ($('#pap')) $('#pap').onclick = () => { S.tab = 'appr'; renderShell(); };
 }
 
 // ---------- Import (admin) ----------
@@ -810,6 +816,7 @@ function openAddLead(done) {
     <label>Phone</label><input id="ap" type="text" inputmode="tel">
     <label>Project (optional)</label>${projectPicker('aj')}
     <label>Budget (optional)</label><input id="ab" type="text">
+    ${isAdmin() ? '' : '<label>Note (who is this person, how do you know them?)</label><textarea id="anote"></textarea><div class="note">Admin will check and approve this lead. Once approved it comes to your list.</div>'}
     <label>Source</label><select id="as">${SOURCES.map((x) => `<option>${x}</option>`).join('')}</select>
     ${isAdmin() ? `<label>Assign to</label><select id="aa"><option value="">Unassigned</option>${S.agents.filter(isAgent).map((a) => `<option value="${a.id}">${esc(a.full_name || a.email)}</option>`).join('')}</select>` : ''}
     <div class="row" style="margin-top:14px"><button class="btn ghost" id="ac">Cancel</button><button class="btn gold" id="asv">Save</button></div>`);
@@ -818,7 +825,15 @@ function openAddLead(done) {
   $('#asv').onclick = async () => {
     const norm = H.normPhone($('#ap').value);
     if (!norm) return toast('Enter a valid 10-digit phone number');
-    const to = isAdmin() ? $('#aa').value || null : S.profile.id;
+    if (!isAdmin()) {
+      const { error: se } = await sb.from('lead_submissions').insert({
+        agent_id: S.profile.id, name: $('#an').value.trim(), phone: $('#ap').value.trim(), phone_norm: norm,
+        project: projectName('aj'), budget: $('#ab').value.trim() || null, source: $('#as').value, note: $('#anote').value.trim() || null });
+      if (se) return toast(se.message);
+      closeSheet(); toast('Sent to admin for approval'); if (done) done();
+      return;
+    }
+    const to = $('#aa').value || null;
     const { error } = await sb.from('leads').insert({
       name: $('#an').value.trim(), phone: $('#ap').value.trim(), phone_norm: norm,
       project: projectName('aj'), budget: $('#ab').value.trim() || null, source: $('#as').value,
@@ -830,6 +845,22 @@ function openAddLead(done) {
 }
 
 // ---------- Team (admin) ----------
+async function viewApprovals(el) {
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  const { data, error } = await sb.from('lead_submissions').select('*, by:profiles!agent_id(full_name)').eq('status', 'pending').order('created_at');
+  if (error) return (el.innerHTML = `<div class="empty">${esc(error.message)}</div>`);
+  const rows = data || [];
+  el.innerHTML = `<button class="btn ghost sm" id="bk2">← Dashboard</button><h2>Leads waiting for approval (${rows.length})</h2>
+  ${rows.length ? rows.map((r) => `<div class="card"><b>${esc(r.name || 'No name')}</b> · <a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>
+    <div class="note">Added by <b>${esc(r.by ? r.by.full_name : '')}</b> · ${fmt(r.created_at)}</div>
+    <div class="note">${[r.project && 'Project: ' + esc(r.project), r.budget && 'Budget: ' + esc(r.budget), r.source && 'Source: ' + esc(r.source)].filter(Boolean).join(' · ')}</div>
+    ${r.note ? `<div class="note">${esc(r.note)}</div>` : ''}
+    <div class="row" style="margin-top:6px"><button class="btn gold sm" data-a="${r.id}">✅ Approve</button><button class="btn ghost sm" data-x="${r.id}">❌ Reject</button></div></div>`).join('') : '<div class="empty">Nothing waiting</div>'}`;
+  $('#bk2').onclick = () => { S.tab = 'dash'; renderShell(); };
+  el.querySelectorAll('[data-a]').forEach((b) => (b.onclick = async () => { b.disabled = true; const { error: e } = await sb.rpc('approve_submission', { p_id: Number(b.dataset.a) }); if (e) { b.disabled = false; return toast(e.message); } toast('Approved and given to the agent'); viewApprovals(el); }));
+  el.querySelectorAll('[data-x]').forEach((b) => (b.onclick = async () => { const why = window.prompt('Reason for rejecting (optional):'); if (why === null) return; const { error: e } = await sb.rpc('reject_submission', { p_id: Number(b.dataset.x), p_reason: why.trim() }); if (e) return toast(e.message); toast('Rejected'); viewApprovals(el); }));
+}
+
 async function viewDisposed(el) {
   const f = { agent: '', range: 'today', outcome: '', from: '', to: '' };
   const ag = S.agents.filter(isAgent);
