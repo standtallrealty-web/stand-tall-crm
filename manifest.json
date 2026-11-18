@@ -1,0 +1,17 @@
+{
+  "name": "Stand Tall Realty CRM",
+  "short_name": "Stand Tall",
+  "start_url": "./",
+  "scope": "./",
+  "id": "./",
+  "description": "Stand Tall Realty - Where Your Dreams Stand Tall",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0c1729",
+  "theme_color": "#0c1729",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
