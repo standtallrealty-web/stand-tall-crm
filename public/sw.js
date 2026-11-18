@@ -1,4 +1,4 @@
-const CACHE = 'stcrm-v9';
+const CACHE = 'stcrm-v10';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'helpers.js', 'config.js', 'manifest.json', 'icon-192.png'];
 
 self.addEventListener('install', (e) => {
@@ -29,15 +29,19 @@ self.addEventListener('fetch', (e) => {
 self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (_) { d = { title: 'Stand Tall CRM', body: e.data ? e.data.text() : '' }; }
-  e.waitUntil(self.registration.showNotification(d.title || 'Stand Tall CRM', {
+  const isLead = d.tag === 'newlead';
+  e.waitUntil(Promise.all([
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => list.forEach((c) => c.postMessage({ type: isLead ? 'newlead' : 'push' }))),
+    self.registration.showNotification(d.title || 'Stand Tall CRM', {
     body: d.body || '',
+    renotify: isLead,
     tag: d.tag || undefined,
     icon: 'icon-192.png',
     badge: 'icon-192.png',
     requireInteraction: true,
-    vibrate: [200, 100, 200],
+    vibrate: isLead ? [500, 200, 500, 200, 500, 200, 500, 200, 500] : [200, 100, 200],
     data: { url: './' },
-  }));
+  })]));
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();

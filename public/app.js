@@ -96,6 +96,7 @@ async function afterLogin() {
   S.tab = isAdmin() ? 'dash' : 'today';
   renderShell();
   if (pushSupported() && Notification.permission === 'granted') subscribePush().catch(() => {});
+  setTimeout(checkOnlineLeads, 800);
   // if the page was reloaded after dialing, ask what happened on that call
   const p = pending();
   if (p) openDisposition(p.lead);
@@ -251,7 +252,7 @@ function manageTemplates() {
 function leadCard(l) {
   const when = l.next_followup ? `<span class="${new Date(l.next_followup) < new Date() ? 'over' : ''}">⏰ ${fmt(l.next_followup)}</span>` : '';
   return `<div class="card lead" data-id="${l.id}">
-    <div><div class="nm">${esc(l.name || 'No name')}</div><div class="ph">${esc(l.phone)}${l.project ? ' · ' + esc(l.project) : ''}</div>
+    <div><div class="nm">${esc(l.name || 'No name')}${l.batch === 'auto' ? ` <span class="pill online">📣 ${esc(l.source === 'Meta Ads' ? 'Meta lead' : (l.source || 'Online lead'))}</span>` : ''}</div><div class="ph">${esc(l.phone)}${l.project ? ' · ' + esc(l.project) : ''}</div>
     <div class="sub">${l.call_count ? l.call_count + ' calls · ' : ''}${when} ${isAdmin() && l.agent ? '· ' + esc(l.agent.full_name || '') : isAdmin() ? '· Unassigned' : ''}</div></div>
     <div style="text-align:right"><span class="pill ${l.status}">${STATUS[l.status]}</span><br><span class="pill ${l.temperature}" style="margin-top:4px">${l.temperature}</span><br><button class="wa-btn" data-id="${l.id}" title="WhatsApp">💬 WhatsApp</button></div></div>`;
 }
@@ -265,21 +266,24 @@ const LEAD_SELECT = '*, agent:profiles!assigned_to(full_name,agent_code)';
 async function viewToday(el) {
   el.innerHTML = '<div class="empty">Loading…</div>';
   const me = S.profile.id;
-  const [due, fresh, today] = await Promise.all([
+  const [due, fresh, today, online] = await Promise.all([
     sb.from('leads').select(LEAD_SELECT).eq('assigned_to', me).lte('next_followup', endOfToday().toISOString()).order('next_followup').limit(200),
     sb.from('leads').select('id', { count: 'exact', head: true }).eq('assigned_to', me).eq('status', 'new'),
     sb.from('calls').select('id', { count: 'exact', head: true }).eq('agent_id', me).gte('called_at', startOfToday().toISOString()),
+    sb.from('leads').select(LEAD_SELECT).eq('assigned_to', me).eq('batch', 'auto').eq('status', 'new').eq('call_count', 0).order('assigned_at', { ascending: false }).limit(50),
   ]);
+  const onl = online.data || [];
   const leads = due.data || [];
   S.dueCount = leads.length;
   const badge = $('nav.bottom button[data-t="today"]');
   if (badge && !badge.querySelector('.badge') && leads.length) badge.insertAdjacentHTML('beforeend', `<i class="badge">${leads.length}</i>`);
   el.innerHTML = `
   <div class="grid"><div class="stat"><b>${today.count || 0}</b><small>Calls today</small></div><div class="stat"><b>${fresh.count || 0}</b><small>New leads left</small></div></div>
+  ${onl.length ? `<h2>📣 New online leads (${onl.length}) · call these first</h2>${onl.map(leadCard).join('')}` : ''}
   <button class="btn gold block" id="next">▶ Call next new lead</button>
   <h2>Follow-ups due (${leads.length})</h2>
   ${leads.length ? leads.map(leadCard).join('') : '<div class="empty">No follow-ups due. Good job! 🎉</div>'}`;
-  bindLeadCards(el, leads);
+  bindLeadCards(el, leads.concat(onl));
   $('#next').onclick = callNext;
 }
 
@@ -704,6 +708,58 @@ function editProject(p, el) {
     closeSheet(); toast('Saved'); viewProjects(el);
   };
 }
+
+// ---------- online lead alarm (Meta / website / portal leads) ----------
+let ringCtx = null, ringTimer = null, ringing = false;
+const seenKey = () => 'stcrm-ringed-' + (S.profile ? S.profile.id : '');
+const ringedIds = () => { try { return JSON.parse(localStorage.getItem(seenKey()) || '[]'); } catch (_) { return []; } };
+const markRinged = (id) => { try { localStorage.setItem(seenKey(), JSON.stringify(ringedIds().concat(id).slice(-200))); } catch (_) {} };
+// phones only allow sound after a tap, so unlock the audio on the first touch
+['click', 'touchstart'].forEach((ev) => document.addEventListener(ev, () => {
+  try { if (!ringCtx) ringCtx = new (window.AudioContext || window.webkitAudioContext)(); if (ringCtx.state === 'suspended') ringCtx.resume(); } catch (_) {}
+}, { passive: true }));
+function beep(freq, t0, dur) {
+  const o = ringCtx.createOscillator(), g = ringCtx.createGain();
+  o.type = 'triangle'; o.frequency.value = freq; o.connect(g); g.connect(ringCtx.destination);
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.6, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function ringOnce() {
+  try { if (navigator.vibrate) navigator.vibrate([400, 150, 400, 150, 400]); } catch (_) {}
+  if (!ringCtx || ringCtx.state !== 'running') return;
+  const t = ringCtx.currentTime;
+  [659, 784, 659, 1047].forEach((f, i) => beep(f, t + i * 0.22, 0.2));
+  [659, 784, 659, 1047].forEach((f, i) => beep(f, t + 1 + i * 0.22, 0.2));
+}
+function stopRing() {
+  ringing = false; clearInterval(ringTimer); ringTimer = null;
+  try { if (navigator.vibrate) navigator.vibrate(0); } catch (_) {}
+  const b = $('#ringbox'); if (b) b.remove();
+}
+function showRing(l) {
+  if (ringing) return;
+  ringing = true; markRinged(l.id);
+  document.body.insertAdjacentHTML('beforeend', `<div id="ringbox" style="position:fixed;inset:0;z-index:9999;background:#0d1a2e;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center">
+    <div style="font-size:56px">📣</div><div style="font-size:22px;font-weight:700;color:#e3b95a">New ${esc(l.source === 'Meta Ads' ? 'Meta' : (l.source || 'online'))} lead!</div>
+    <div style="font-size:26px;font-weight:700">${esc(l.name || 'New enquiry')}</div><div style="font-size:20px">${esc(l.phone)}</div>
+    ${l.project ? `<div style="opacity:.85">${esc(l.project)}</div>` : ''}
+    <button class="btn gold block" id="rpick" style="margin-top:18px;font-size:20px;padding:16px">📞 Pick up &amp; call now</button>
+    <button class="btn ghost block" id="rlater" style="color:#fff;border-color:#fff">Later</button></div>`);
+  ringOnce(); ringTimer = setInterval(ringOnce, 2200);
+  $('#rpick').onclick = () => { stopRing(); S.tab = 'today'; renderShell(); startCall(l); };
+  $('#rlater').onclick = () => { stopRing(); if (S.tab === 'today') renderShell(); };
+}
+async function checkOnlineLeads() {
+  if (!S.profile || isAdmin() || ringing || document.visibilityState !== 'visible') return;
+  const since = new Date(Date.now() - 30 * 60000).toISOString();
+  const { data } = await sb.from('leads').select('*').eq('assigned_to', S.profile.id).eq('batch', 'auto').eq('status', 'new').eq('call_count', 0).gte('assigned_at', since).order('assigned_at');
+  const seen = ringedIds();
+  const l = (data || []).find((x) => !seen.includes(x.id));
+  if (l) showRing(l);
+}
+setInterval(checkOnlineLeads, 12000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkOnlineLeads(); });
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.type === 'newlead') checkOnlineLeads(); });
 
 // ---------- add lead ----------
 const SOURCES = ['Cold call', 'Walk-in', 'Referral', 'Facebook', 'OLX', 'Website', 'Other'];
