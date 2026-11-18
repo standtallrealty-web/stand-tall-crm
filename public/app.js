@@ -20,7 +20,7 @@ const OUTCOMES = [
   { k: 'not_interested', l: 'Not interested', t: 'cold', fu: false },
   { k: 'wrong_number', l: 'Wrong number', t: null, fu: false },
 ];
-const TARGET_DIAL = 450, TARGET_CONN = 100;
+const TARGET_CONN = 100;
 const REASONS = {
   not_interested: ['Already purchased', 'Not looking to buy now', 'Budget too low', 'Different location / area', 'Already dealing with another agent', 'Only wants ready-to-move', 'Rude / asked not to call again', 'Other'],
   wrong_number: ['Number does not exist', 'Wrong person / not the owner', 'Switched off / not reachable', 'Other'],
@@ -295,7 +295,7 @@ async function viewToday(el) {
   <div class="card" style="text-align:center"><div class="note">Today's target: ${TARGET_CONN} connected calls</div>
     <div style="font-size:44px;font-weight:800;line-height:1.1">${Math.max(0, TARGET_CONN - conn)}</div><div class="note">${conn >= TARGET_CONN ? '🎉 Target done! Keep going' : 'connected calls left'}</div>
     <div style="height:8px;background:#e8edf3;border-radius:6px;margin:8px 0;overflow:hidden"><div style="height:8px;width:${Math.min(100, conn)}%;background:#2e9e63"></div></div>
-    <div class="note">Connected ${conn}/${TARGET_CONN} · Dialed ${dialed}/${TARGET_DIAL} minimum</div></div>
+    <div class="note">Connected ${conn} of ${TARGET_CONN}</div></div>
   <div class="grid"><div class="stat"><b>${dialed}</b><small>Calls dialed today</small></div><div class="stat"><b>${fresh.count || 0}</b><small>New leads left</small></div></div>
   ${fl.length ? `<h2>📁 My calling files</h2>${fl.map((x) => { const t = Number(x.total), c = Number(x.called), pct = t ? Math.round((c / t) * 100) : 0; return `<div class="card"><b>${esc(x.batch)}</b><div class="note">${c} called · ${t - c} left of ${t}</div><div style="height:8px;background:#e8edf3;border-radius:6px;margin-top:6px;overflow:hidden"><div style="height:8px;width:${pct}%;background:var(--green,#2e9e63)"></div></div></div>`; }).join('')}` : ''}
   ${onl.length ? `<h2>📣 New online leads (${onl.length}) · call these first</h2>${onl.map(leadCard).join('')}` : ''}
@@ -558,8 +558,8 @@ async function viewDash(el) {
   const ag = S.agents.filter(isAgent);
   el.innerHTML = `<div class="grid"><div class="stat"><b>${total}</b><small>Total leads</small></div><div class="stat"><b>${unassigned}</b><small>Unassigned</small></div>
   <div class="stat" id="bk" style="cursor:pointer;border:1px solid #e0bb73;grid-column:span 2"><b>${rows.filter((x) => x.status === 'booked').reduce((t, x) => t + Number(x.n), 0)}</b><small>✅ Booked clients (tap to see the list)</small></div></div>
-  <div class="tablewrap"><table><tr><th>Agent</th><th>Leads</th><th>New</th><th>Dialed (of ${TARGET_DIAL})</th><th>Connected (of ${TARGET_CONN})</th><th>Interested</th><th>Call back</th><th>Site visit</th><th>Booked</th><th>Not int.</th><th>Hot</th><th>Warm</th></tr>
-  ${ag.map((a) => { const x = agg(a.id); return `<tr><td>${esc(a.full_name || a.email)}</td><td>${x.total}</td><td>${x.new}</td><td>${((dsx.find((d) => d.agent_id === a.id) || {}).dialed) || 0}</td><td><b>${((dsx.find((d) => d.agent_id === a.id) || {}).connected) || 0}</b></td><td>${x.interested}</td><td>${x.call_back}</td><td>${x.site_visit}</td><td>${x.booked}</td><td>${x.not_interested}</td><td>${x.hot}</td><td>${x.warm}</td></tr>`; }).join('')}</table></div>`;
+  <div class="tablewrap"><table><tr><th>Agent</th><th>Leads</th><th>New</th><th>Connected (of ${TARGET_CONN})</th><th>Interested</th><th>Call back</th><th>Site visit</th><th>Booked</th><th>Not int.</th><th>Hot</th><th>Warm</th></tr>
+  ${ag.map((a) => { const x = agg(a.id); return `<tr><td>${esc(a.full_name || a.email)}</td><td>${x.total}</td><td>${x.new}</td><td><b>${((dsx.find((d) => d.agent_id === a.id) || {}).connected) || 0}</b></td><td>${x.interested}</td><td>${x.call_back}</td><td>${x.site_visit}</td><td>${x.booked}</td><td>${x.not_interested}</td><td>${x.hot}</td><td>${x.warm}</td></tr>`; }).join('')}</table></div>`;
   $('#bk').onclick = goBooked;
 }
 

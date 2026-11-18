@@ -1,4 +1,4 @@
-const CACHE = 'stcrm-v13';
+const CACHE = 'stcrm-v14';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'helpers.js', 'config.js', 'manifest.json', 'icon-192.png'];
 
 self.addEventListener('install', (e) => {
