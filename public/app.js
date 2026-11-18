@@ -267,19 +267,22 @@ const LEAD_SELECT = '*, agent:profiles!assigned_to(full_name,agent_code)';
 async function viewToday(el) {
   el.innerHTML = '<div class="empty">Loading…</div>';
   const me = S.profile.id;
-  const [due, fresh, today, online] = await Promise.all([
+  const [due, fresh, today, online, files] = await Promise.all([
     sb.from('leads').select(LEAD_SELECT).eq('assigned_to', me).lte('next_followup', endOfToday().toISOString()).order('next_followup').limit(200),
     sb.from('leads').select('id', { count: 'exact', head: true }).eq('assigned_to', me).eq('status', 'new'),
     sb.from('calls').select('id', { count: 'exact', head: true }).eq('agent_id', me).gte('called_at', startOfToday().toISOString()),
     sb.from('leads').select(LEAD_SELECT).eq('assigned_to', me).eq('batch', 'auto').eq('status', 'new').eq('call_count', 0).order('assigned_at', { ascending: false }).limit(50),
+    sb.rpc('my_files'),
   ]);
   const onl = online.data || [];
+  const fl = (files.data || []).filter((x) => Number(x.total) > 0).slice(0, 4);
   const leads = due.data || [];
   S.dueCount = leads.length;
   const badge = $('nav.bottom button[data-t="today"]');
   if (badge && !badge.querySelector('.badge') && leads.length) badge.insertAdjacentHTML('beforeend', `<i class="badge">${leads.length}</i>`);
   el.innerHTML = `
   <div class="grid"><div class="stat"><b>${today.count || 0}</b><small>Calls today</small></div><div class="stat"><b>${fresh.count || 0}</b><small>New leads left</small></div></div>
+  ${fl.length ? `<h2>📁 My calling files</h2>${fl.map((x) => { const t = Number(x.total), c = Number(x.called), pct = t ? Math.round((c / t) * 100) : 0; return `<div class="card"><b>${esc(x.batch)}</b><div class="note">${c} called · ${t - c} left of ${t}</div><div style="height:8px;background:#e8edf3;border-radius:6px;margin-top:6px;overflow:hidden"><div style="height:8px;width:${pct}%;background:var(--green,#2e9e63)"></div></div></div>`; }).join('')}` : ''}
   ${onl.length ? `<h2>📣 New online leads (${onl.length}) · call these first</h2>${onl.map(leadCard).join('')}` : ''}
   <button class="btn gold block" id="next">▶ Call next new lead</button>
   <h2>Follow-ups due (${leads.length})</h2>
@@ -302,9 +305,9 @@ async function viewLeads(el) {
   el.innerHTML = `
   <button class="btn gold block sm" id="addl" style="margin-bottom:8px">＋ Add lead</button>
   <input id="q" type="text" placeholder="Search name, phone or society">
-  <div class="chips" id="qc" style="margin-top:8px">${[['', 'All'], ['interested', 'Interested'], ['site_visit', 'Site visit'], ['negotiation', 'Negotiation'], ['booked', '✅ Booked'], ['call_back', 'Call back']].map(([k, v]) => `<button class="chip" data-k="${k}">${v}</button>`).join('')}</div>
+  <div class="chips" id="qc" style="margin-top:8px">${[['', isAdmin() ? 'All' : 'Active'], ['interested', 'Interested'], ['site_visit', 'Site visit'], ['negotiation', 'Negotiation'], ['booked', '✅ Booked'], ['call_back', 'Call back']].map(([k, v]) => `<button class="chip" data-k="${k}">${v}</button>`).join('')}</div>
   <div class="row" style="margin-top:8px">
-    <select id="fs"><option value="">All status</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
+    <select id="fs"><option value="">${isAdmin() ? 'All status' : 'Active leads'}</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
     <select id="ft"><option value="">All temp</option><option>hot</option><option>warm</option><option>cold</option></select>
   </div>
   ${isAdmin() ? `<select id="fa" style="margin-top:8px"><option value="">All agents</option><option value="none">Unassigned</option>${S.agents.filter(isAgent).map((a) => `<option value="${a.id}">${esc(a.full_name || a.email)}</option>`).join('')}</select>
@@ -316,6 +319,7 @@ async function viewLeads(el) {
     if (f.batch) q = q.eq('batch', f.batch);
     if (f.q) { const t = f.q.replace(/[,()]/g, ' '); q = q.or(`name.ilike.%${t}%,place.ilike.%${t}%,phone_norm.ilike.%${t.replace(/\D/g, '') || t}%`); }
     if (f.status) q = q.eq('status', f.status);
+    else if (!isAdmin()) q = q.in('status', ['interested', 'call_back', 'site_visit', 'negotiation', 'booked', 'no_answer']);
     if (f.temp) q = q.eq('temperature', f.temp);
     if (f.agent === 'none') q = q.is('assigned_to', null);
     else if (f.agent) q = q.eq('assigned_to', f.agent);
