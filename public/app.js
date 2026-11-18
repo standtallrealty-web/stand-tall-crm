@@ -226,6 +226,23 @@ async function openWhatsApp(l, onDone) {
   $('#wb').onclick = () => { sendWhatsApp(l, ''); done(); };
   $('#wc').onclick = done;
 }
+function shareProject(l) {
+  const act = S.projects.filter((p) => p.active);
+  openSheet(`<h3>📤 Share project details</h3><div class="note">Pick a project. WhatsApp opens with the details ready; just tap Send.</div>
+    ${act.map((p) => `<button class="card tpl" data-id="${p.id}" style="width:100%;text-align:left;border:1px solid var(--line)"><b>${esc(p.name)}</b><div class="sub">${esc([pcatName(p.category), p.location, p.price_range].filter(Boolean).join(' · '))}${p.video_url ? ' · 🎥' : ''}</div></button>`).join('') || '<div class="empty">No projects yet.</div>'}
+    <button class="btn ghost block" style="margin-top:8px" id="spc">Close</button>`);
+  $('#spc').onclick = closeSheet;
+  document.querySelectorAll('.tpl').forEach((b) => (b.onclick = () => {
+    const p = act.find((x) => String(x.id) === b.dataset.id);
+    const first = (l.name || '').trim().split(/\s+/)[0];
+    const agent = (isAdmin() ? '' : S.profile.full_name || '') || 'Stand Tall Realty';
+    const msg = [`Hello${first ? ' ' + first : ''}, this is ${agent} from Stand Tall Realty, Pune.`, '',
+      `*${p.name}*`, p.location && `📍 ${p.location}`, p.property_type && `🏠 ${p.property_type}`, p.price_range && `💰 ${p.price_range}`,
+      p.details && '\n' + p.details, p.video_url && `\n🎥 Watch: ${p.video_url}`, '',
+      `For a site visit or more details, call or WhatsApp ${BRAND.phone}.`, `${BRAND.site}`].filter((x) => x !== '' ? x : true).filter((x) => x !== undefined && x !== null && x !== false).join('\n');
+    sendWhatsApp(l, msg); closeSheet();
+  }));
+}
 function manageTemplates() {
   const draw = async () => {
     const tpls = await loadTemplates();
@@ -426,6 +443,7 @@ async function openLead(l) {
       ${extra.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join('')}</div>
     <div class="row" style="margin:12px 0"><button class="btn green" id="dial">📞 Call</button>
       <button class="btn ghost" id="wa">💬 WhatsApp</button></div>
+    <button class="btn ghost block sm" id="shp" style="margin-bottom:6px">📤 Share project details on WhatsApp</button>
     <button class="btn ghost block sm" id="logm">Log a call manually</button>
     ${isAdmin() ? `<label>Reassign to</label><select id="reas"><option value="">Unassigned</option>${S.agents.filter(isAgent).map((a) => `<option value="${a.id}" ${a.id === l.assigned_to ? 'selected' : ''}>${esc(a.full_name || a.email)}</option>`).join('')}</select>` : ''}
     <h2>History</h2>
@@ -441,6 +459,7 @@ async function openLead(l) {
   };
   $('#dial').onclick = () => { closeSheet(); startCall(l); };
   $('#logm').onclick = () => openDisposition(l);
+  $('#shp').onclick = () => shareProject(l);
   $('#wa').onclick = () => openWhatsApp(l);
   if (isAdmin()) $('#reas').onchange = async (e) => {
     const v = e.target.value || null;
@@ -740,6 +759,7 @@ function editProject(p, el) {
     <label>Location / area</label><input id="pl" type="text" value="${esc(p.location || '')}" placeholder="e.g. Kondhwa, Pune">
     <label>Type</label><input id="pt" type="text" value="${esc(p.property_type || '')}" placeholder="e.g. 1/2/3 BHK flats">
     <label>Price range</label><input id="pr" type="text" value="${esc(p.price_range || '')}" placeholder="e.g. 45L - 85L">
+    <label>Video / brochure link (sent to customers)</label><input id="pv" type="text" value="${esc(p.video_url || '')}" placeholder="Instagram reel, YouTube or brochure link">
     <label>Details (shown to the team)</label><textarea id="pd" placeholder="Possession date, amenities, RERA no., offers...">${esc(p.details || '')}</textarea>
     <label><input type="checkbox" id="pa" ${p.active ? 'checked' : ''}> Show to agents</label>
     <div class="row" style="margin-top:14px"><button class="btn ghost" id="pc">Cancel</button><button class="btn gold" id="ps">Save</button></div>`);
@@ -748,7 +768,7 @@ function editProject(p, el) {
     const name = $('#pn').value.trim();
     if (!name) return toast('Enter the project name');
     const row = { name, category: $('#pc2').value, location: $('#pl').value.trim() || null, property_type: $('#pt').value.trim() || null,
-      price_range: $('#pr').value.trim() || null, details: $('#pd').value.trim() || null, active: $('#pa').checked };
+      price_range: $('#pr').value.trim() || null, video_url: $('#pv').value.trim() || null, details: $('#pd').value.trim() || null, active: $('#pa').checked };
     const q = isNew ? sb.from('projects').insert(row) : sb.from('projects').update(row).eq('id', p.id);
     const { error } = await q;
     if (error) return toast(error.code === '23505' ? 'A project with this name already exists' : error.message);
