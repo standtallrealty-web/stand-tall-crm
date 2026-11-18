@@ -113,7 +113,7 @@ function renderShell() {
     ? [['dash', '📊', 'Dashboard'], ['import', '⬆️', 'Import'], ['dist', '🔀', 'Distribute'], ['leads', '👥', 'All leads'], ['team', '🧑‍💼', 'Team'], ['proj', '🏢', 'Projects']]
     : [['today', '📞', 'Today'], ['leads', '👥', 'My leads'], ['stats', '📊', 'Stats']];
   $('#app').innerHTML = `
-  <header class="top"><div class="hb">${logoSvg(40)}<div><b>STAND TALL <em>REALTY</em></b><small>${esc(S.profile.full_name || S.profile.email)}${isAdmin() ? ' · Admin' : S.profile.agent_code ? ' · ' + esc(S.profile.agent_code) : ''}</small></div></div>
+  <header class="top"><div class="hb">${logoSvg(40)}<div><b>STAND TALL <em>REALTY</em></b><small>${isAdmin() ? 'Admin' : esc(S.profile.full_name || S.profile.email) + (S.profile.agent_code ? ' · ' + esc(S.profile.agent_code) : '')}</small></div></div>
   <div style="display:flex;gap:8px"><button id="bell" title="Reminders">🔔</button><button id="pw" title="Change password">🔑</button><button id="lo">Logout</button></div></header>
   <div id="pushbar"></div>
   <main id="view"></main>
@@ -197,7 +197,7 @@ async function loadTemplates() {
 }
 function fillTpl(t, l) {
   const first = ((l.name || '').trim().split(/\s+/)[0]) || 'Sir/Madam';
-  return t.replace(/\{name\}/g, first).replace(/\{agent\}/g, (S.profile.full_name || '').replace(/\s*\(Admin\)/, '') || 'Stand Tall Realty')
+  return t.replace(/\{name\}/g, first).replace(/\{agent\}/g, (isAdmin() ? '' : (S.profile.full_name || '')) || 'Stand Tall Realty')
     .replace(/\{project\}/g, l.project || 'our projects in Pune').replace(/\{phone\}/g, l.phone || '');
 }
 function sendWhatsApp(l, text) {
