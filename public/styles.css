@@ -101,3 +101,6 @@ html,body{background:var(--bg)}
 
 .chip.on{background:#14213a;color:#fff;border-color:#14213a}
 header.top button#pw,header.top button#bell{padding:6px 9px}
+
+.wa-btn{margin-top:6px;border:1px solid #25d366;background:#e9fbf0;color:#128c4a;border-radius:16px;padding:4px 10px;font-size:12px;font-weight:600}
+.tpl{background:#fff;border-radius:12px;padding:10px 12px;margin-bottom:8px;font:inherit;color:inherit}

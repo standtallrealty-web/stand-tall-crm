@@ -189,16 +189,75 @@ function openChangePassword() {
 }
 const goBooked = () => { S.preset = 'booked'; S.tab = 'leads'; renderShell(); };
 
+// ---------- WhatsApp templates ----------
+async function loadTemplates() {
+  const { data } = await sb.from('wa_templates').select('*').order('sort').order('id');
+  S.tpls = data || [];
+  return S.tpls;
+}
+function fillTpl(t, l) {
+  const first = ((l.name || '').trim().split(/\s+/)[0]) || 'Sir/Madam';
+  return t.replace(/\{name\}/g, first).replace(/\{agent\}/g, (S.profile.full_name || '').replace(/\s*\(Admin\)/, '') || 'Stand Tall Realty')
+    .replace(/\{project\}/g, l.project || 'our projects in Pune').replace(/\{phone\}/g, l.phone || '');
+}
+function sendWhatsApp(l, text) {
+  const num = (CFG.COUNTRY_CODE + l.phone_norm).replace('+', '');
+  window.open(`https://wa.me/${num}${text ? '?text=' + encodeURIComponent(text) : ''}`, '_blank');
+}
+async function openWhatsApp(l, onDone) {
+  if (!l) return;
+  openSheet('<div class="empty">Loading…</div>');
+  const tpls = (await loadTemplates()).filter((t) => t.active);
+  openSheet(`<h3>💬 WhatsApp ${esc(l.name || l.phone)}</h3><div class="note">Choose a message. WhatsApp opens with it ready; just tap Send.</div>
+    ${tpls.map((t) => `<button class="card tpl" data-id="${t.id}" style="width:100%;text-align:left;border:1px solid var(--line)"><b>${esc(t.title)}</b><div class="sub" style="white-space:pre-line">${esc(fillTpl(t.body, l)).slice(0, 140)}${t.body.length > 140 ? '…' : ''}</div></button>`).join('') || '<div class="empty">No templates yet.</div>'}
+    <button class="btn ghost block sm" id="wb">Open chat without a message</button>
+    <button class="btn ghost block" style="margin-top:8px" id="wc">${onDone ? 'Skip' : 'Close'}</button>`);
+  const done = () => { closeSheet(); if (onDone) onDone(); };
+  document.querySelectorAll('.tpl').forEach((b) => (b.onclick = () => { sendWhatsApp(l, fillTpl(tpls.find((t) => String(t.id) === b.dataset.id).body, l)); done(); }));
+  $('#wb').onclick = () => { sendWhatsApp(l, ''); done(); };
+  $('#wc').onclick = done;
+}
+function manageTemplates() {
+  const draw = async () => {
+    const tpls = await loadTemplates();
+    openSheet(`<h3>💬 WhatsApp message templates</h3>
+      <div class="note">Use {name} for the customer's first name, {agent} for the employee's name and {project} for the project.</div>
+      <button class="btn gold block sm" id="tn">＋ New template</button>
+      ${tpls.map((t) => `<div class="card lead" data-id="${t.id}"><div><div class="nm">${esc(t.title)}</div><div class="sub">${t.active ? 'Active' : '<span class="over">Hidden</span>'}</div></div><span style="color:var(--muted)">Edit ›</span></div>`).join('')}
+      <button class="btn ghost block" style="margin-top:8px" id="tc">Close</button>`);
+    $('#tc').onclick = closeSheet;
+    $('#tn').onclick = () => edit(null);
+    document.querySelectorAll('.lead[data-id]').forEach((c) => (c.onclick = () => edit(S.tpls.find((t) => String(t.id) === c.dataset.id))));
+  };
+  const edit = (t) => {
+    openSheet(`<h3>${t ? 'Edit' : 'New'} template</h3><label>Title</label><input id="tt" type="text" value="${esc(t ? t.title : '')}">
+      <label>Message</label><textarea id="tb" style="min-height:160px">${esc(t ? t.body : '')}</textarea>
+      <label><input type="checkbox" id="ta" ${!t || t.active ? 'checked' : ''}> Show to employees</label>
+      <div class="row" style="margin-top:12px"><button class="btn ghost" id="tx">Back</button><button class="btn gold" id="ts">Save</button></div>
+      ${t ? '<button class="btn red block sm" style="margin-top:8px" id="td">Delete template</button>' : ''}`);
+    $('#tx').onclick = draw;
+    $('#ts').onclick = async () => {
+      const row = { title: $('#tt').value.trim(), body: $('#tb').value.trim(), active: $('#ta').checked };
+      if (!row.title || !row.body) return toast('Enter a title and a message');
+      const { error } = t ? await sb.from('wa_templates').update(row).eq('id', t.id) : await sb.from('wa_templates').insert(row);
+      if (error) return toast(error.message); draw();
+    };
+    if (t) $('#td').onclick = async () => { if (!window.confirm('Delete this template?')) return; await sb.from('wa_templates').delete().eq('id', t.id); draw(); };
+  };
+  draw();
+}
+
 // ---------- lead card ----------
 function leadCard(l) {
   const when = l.next_followup ? `<span class="${new Date(l.next_followup) < new Date() ? 'over' : ''}">⏰ ${fmt(l.next_followup)}</span>` : '';
   return `<div class="card lead" data-id="${l.id}">
     <div><div class="nm">${esc(l.name || 'No name')}</div><div class="ph">${esc(l.phone)}${l.project ? ' · ' + esc(l.project) : ''}</div>
     <div class="sub">${l.call_count ? l.call_count + ' calls · ' : ''}${when} ${isAdmin() && l.agent ? '· ' + esc(l.agent.full_name || '') : isAdmin() ? '· Unassigned' : ''}</div></div>
-    <div style="text-align:right"><span class="pill ${l.status}">${STATUS[l.status]}</span><br><span class="pill ${l.temperature}" style="margin-top:4px">${l.temperature}</span></div></div>`;
+    <div style="text-align:right"><span class="pill ${l.status}">${STATUS[l.status]}</span><br><span class="pill ${l.temperature}" style="margin-top:4px">${l.temperature}</span><br><button class="wa-btn" data-id="${l.id}" title="WhatsApp">💬 WhatsApp</button></div></div>`;
 }
 function bindLeadCards(root, leads) {
   root.querySelectorAll('.lead').forEach((el) => (el.onclick = () => openLead(leads.find((x) => String(x.id) === el.dataset.id))));
+  root.querySelectorAll('.wa-btn').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); openWhatsApp(leads.find((x) => String(x.id) === b.dataset.id)); }));
 }
 const LEAD_SELECT = '*, agent:profiles!assigned_to(full_name,agent_code)';
 
@@ -337,7 +396,7 @@ async function openLead(l) {
       ${isAdmin() ? `<span>Agent</span><span>${esc(l.agent ? l.agent.full_name : 'Unassigned')}</span>` : ''}
       ${extra.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join('')}</div>
     <div class="row" style="margin:12px 0"><button class="btn green" id="dial">📞 Call</button>
-      <a class="btn ghost" style="text-align:center;text-decoration:none" target="_blank" href="https://wa.me/${waNum}">WhatsApp</a></div>
+      <button class="btn ghost" id="wa">💬 WhatsApp</button></div>
     <button class="btn ghost block sm" id="logm">Log a call manually</button>
     ${isAdmin() ? `<label>Reassign to</label><select id="reas"><option value="">Unassigned</option>${S.agents.filter(isAgent).map((a) => `<option value="${a.id}" ${a.id === l.assigned_to ? 'selected' : ''}>${esc(a.full_name || a.email)}</option>`).join('')}</select>` : ''}
     <h2>History</h2>
@@ -353,6 +412,7 @@ async function openLead(l) {
   };
   $('#dial').onclick = () => { closeSheet(); startCall(l); };
   $('#logm').onclick = () => openDisposition(l);
+  $('#wa').onclick = () => openWhatsApp(l);
   if (isAdmin()) $('#reas').onchange = async (e) => {
     const v = e.target.value || null;
     const { error } = await sb.from('leads').update({ assigned_to: v, assigned_at: v ? new Date().toISOString() : null }).eq('id', l.id);
@@ -414,7 +474,9 @@ function openDisposition(lead) {
     if (error) return toast(error.message);
     sessionStorage.removeItem('pendingCall');
     closeSheet(); toast('Saved');
-    if (next) { await callNext(); } else refresh();
+    const after = () => (next ? callNext() : refresh());
+    if (st.outcome === 'no_answer') return openWhatsApp(lead, after);
+    after();
   };
   bindProjectPicker('dp');
   $('#sv').onclick = () => save(false);
@@ -602,13 +664,14 @@ async function viewProjects(el) {
   const { data: oth } = await sb.from('calls').select('project_other').not('project_other', 'is', null).limit(500);
   const names = new Set(S.projects.map((p) => p.name.toLowerCase()));
   const suggested = [...new Set((oth || []).map((r) => r.project_other.trim()))].filter((n) => n && !names.has(n.toLowerCase()));
-  el.innerHTML = `<button class="btn gold block" id="np">＋ Add project</button>
+  el.innerHTML = `<button class="btn gold block" id="np">＋ Add project</button><button class="btn ghost block" id="mt" style="margin-top:8px">💬 WhatsApp message templates</button>
   ${suggested.length ? `<h2>Mentioned by agents (not in your list)</h2>${suggested.map((n) => `<div class="card lead"><div class="nm">${esc(n)}</div><button class="btn sm" data-add="${esc(n)}" style="flex:none">Add to list</button></div>`).join('')}` : ''}
   <h2>Your projects (${S.projects.length})</h2>
   ${S.projects.map((p) => `<div class="card lead" data-id="${p.id}"><div><div class="nm">${esc(p.name)}</div>
     <div class="ph">${esc([p.location, p.property_type, p.price_range].filter(Boolean).join(' · '))}</div>
     <div class="sub">${p.active ? 'Active' : '<span class="over">Hidden from agents</span>'}</div></div><span style="color:var(--muted)">Edit ›</span></div>`).join('') || '<div class="empty">No projects yet. Add your first one.</div>'}`;
   $('#np').onclick = () => editProject(null, el);
+  $('#mt').onclick = manageTemplates;
   el.querySelectorAll('[data-add]').forEach((b) => (b.onclick = () => editProject({ name: b.dataset.add, active: true }, el)));
   el.querySelectorAll('.lead[data-id]').forEach((c) => (c.onclick = () => editProject(S.projects.find((p) => String(p.id) === c.dataset.id), el)));
 }
