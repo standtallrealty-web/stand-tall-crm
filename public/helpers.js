@@ -19,6 +19,8 @@
       project: find(/project|property|interest/i),
       source: find(/source|campaign|channel/i),
       budget: find(/budget|price/i),
+      society: find(/society|building|apartment|complex|tower|wing|project name/i),
+      area: find(/area|location|locality|place|address/i),
     };
   }
 
@@ -35,11 +37,13 @@
       seen.add(norm);
       const extra = {};
       for (const k of Object.keys(r)) {
-        if (k === nameCol || k === phoneCol || k === more.project || k === more.source || k === more.budget) continue;
+        if (k === nameCol || k === phoneCol || k === more.project || k === more.source || k === more.budget || k === more.society || k === more.area) continue;
         const val = r[k];
         if (val !== '' && val != null) extra[k] = String(val);
       }
+      const place = [more.society ? String(r[more.society] ?? '').trim() : '', more.area ? String(r[more.area] ?? '').trim() : ''].filter(Boolean).join(' · ');
       leads.push({
+        place,
         name: nameCol ? String(r[nameCol] ?? '').trim() : '',
         phone: String(r[phoneCol]).trim(),
         project: more.project ? String(r[more.project] ?? '').trim() : '',

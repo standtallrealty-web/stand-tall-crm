@@ -253,6 +253,7 @@ function leadCard(l) {
   const when = l.next_followup ? `<span class="${new Date(l.next_followup) < new Date() ? 'over' : ''}">⏰ ${fmt(l.next_followup)}</span>` : '';
   return `<div class="card lead" data-id="${l.id}">
     <div><div class="nm">${esc(l.name || 'No name')}${l.batch === 'auto' ? ` <span class="pill online">📣 ${esc(l.source === 'Meta Ads' ? 'Meta lead' : (l.source || 'Online lead'))}</span>` : ''}</div><div class="ph">${esc(l.phone)}${l.project ? ' · ' + esc(l.project) : ''}</div>
+    ${l.place ? `<div class="ph" style="color:#14213a;font-weight:600">📍 ${esc(l.place)}</div>` : ''}
     <div class="sub">${l.call_count ? l.call_count + ' calls · ' : ''}${when} ${isAdmin() && l.agent ? '· ' + esc(l.agent.full_name || '') : isAdmin() ? '· Unassigned' : ''}</div></div>
     <div style="text-align:right"><span class="pill ${l.status}">${STATUS[l.status]}</span><br><span class="pill ${l.temperature}" style="margin-top:4px">${l.temperature}</span><br><button class="wa-btn" data-id="${l.id}" title="WhatsApp">💬 WhatsApp</button></div></div>`;
 }
@@ -300,7 +301,7 @@ async function viewLeads(el) {
   S.preset = null;
   el.innerHTML = `
   <button class="btn gold block sm" id="addl" style="margin-bottom:8px">＋ Add lead</button>
-  <input id="q" type="text" placeholder="Search name or phone">
+  <input id="q" type="text" placeholder="Search name, phone or society">
   <div class="chips" id="qc" style="margin-top:8px">${[['', 'All'], ['interested', 'Interested'], ['site_visit', 'Site visit'], ['negotiation', 'Negotiation'], ['booked', '✅ Booked'], ['call_back', 'Call back']].map(([k, v]) => `<button class="chip" data-k="${k}">${v}</button>`).join('')}</div>
   <div class="row" style="margin-top:8px">
     <select id="fs"><option value="">All status</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
@@ -313,7 +314,7 @@ async function viewLeads(el) {
   let page = 0, all = [];
   const filt = (q) => {
     if (f.batch) q = q.eq('batch', f.batch);
-    if (f.q) { const t = f.q.replace(/[,()]/g, ' '); q = q.or(`name.ilike.%${t}%,phone_norm.ilike.%${t.replace(/\D/g, '') || t}%`); }
+    if (f.q) { const t = f.q.replace(/[,()]/g, ' '); q = q.or(`name.ilike.%${t}%,place.ilike.%${t}%,phone_norm.ilike.%${t.replace(/\D/g, '') || t}%`); }
     if (f.status) q = q.eq('status', f.status);
     if (f.temp) q = q.eq('temperature', f.temp);
     if (f.agent === 'none') q = q.is('assigned_to', null);
@@ -377,7 +378,7 @@ async function exportAll() {
   const out = rows.map((l) => ({
     Name: l.name, Phone: l.phone, Agent: l.agent ? l.agent.full_name : '', Status: STATUS[l.status], Temperature: l.temperature,
     Calls: l.call_count, 'Last called': l.last_called_at || '', 'Next follow-up': l.next_followup || '', 'Last note': l.last_note || '',
-    Batch: l.batch || '', ...l.extra,
+    Batch: l.batch || '', Place: l.place || '', ...l.extra,
   }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(out), 'Leads');
@@ -395,6 +396,7 @@ async function openLead(l) {
     <h3>${esc(l.name || 'No name')}</h3>
     <div><span class="pill ${l.status}">${STATUS[l.status]}</span> <span class="pill ${l.temperature}">${l.temperature}</span></div>
     <div class="kv"><span>Phone</span><span>${esc(l.phone)}</span>
+      ${l.place ? `<span>📍 From</span><span><b>${esc(l.place)}</b></span>` : ''}
       ${l.project ? `<span>Project</span><span>${esc(l.project)}</span>` : ''}${l.source ? `<span>Source</span><span>${esc(l.source)}</span>` : ''}${l.budget ? `<span>Budget</span><span>${esc(l.budget)}</span>` : ''}
       ${l.next_followup ? `<span>Follow-up</span><span>${fmt(l.next_followup)}</span>` : ''}
       ${isAdmin() ? `<span>Agent</span><span>${esc(l.agent ? l.agent.full_name : 'Unassigned')}</span>` : ''}
@@ -442,7 +444,7 @@ document.addEventListener('visibilitychange', () => {
 function openDisposition(lead) {
   const st = { outcome: '', temp: lead.temperature || 'cold', tempTouched: false };
   openSheet(`
-    <h3>How did the call go?</h3><div class="note">${esc(lead.name || '')} · ${esc(lead.phone)}</div>
+    <h3>How did the call go?</h3><div class="note">${esc(lead.name || '')} · ${esc(lead.phone)}${lead.place ? ' · 📍 ' + esc(lead.place) : ''}</div>
     <label>Outcome</label><div class="chips" id="oc">${OUTCOMES.map((o) => `<button class="chip" data-k="${o.k}">${o.l}</button>`).join('')}</div>
     <label>Project discussed</label>${projectPicker('dp', lead.project)}
     <label>Lead temperature</label><div class="chips" id="tp">${['cold', 'warm', 'hot'].map((t) => `<button class="chip ${t} ${t === st.temp ? 'on' : ''}" data-k="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div>
@@ -543,10 +545,12 @@ function viewImport(el) {
       <label>Project column (optional)</label><select id="cj">${opts(g.project)}</select>
       <label>Source column (optional)</label><select id="cs">${opts(g.source)}</select>
       <label>Budget column (optional)</label><select id="cb">${opts(g.budget)}</select>
+      <label>Society / building name column (where the data is from)</label><select id="cso">${opts(g.society)}</select>
+      <label>Area / location column (optional)</label><select id="car">${opts(g.area)}</select>
       <label>Batch name</label><input id="bn" type="text" value="${esc(f.name.replace(/\.[^.]+$/, '') + ' ' + new Date().toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}">
       <div id="sum" class="note"></div><button class="btn gold block" id="imp" style="margin-top:10px">Import</button><div id="prog" class="note"></div></div>`;
-    const calc = () => { const r = H.buildLeads(rows, $('#cn').value, $('#cp').value, { project: $('#cj').value, source: $('#cs').value, budget: $('#cb').value }); $('#sum').innerHTML = `Valid unique numbers: <b>${r.leads.length}</b> · Invalid/blank: ${r.invalid} · Duplicates in file: ${r.dupInFile}`; return r; };
-    ['#cn', '#cp', '#cj', '#cs', '#cb'].forEach((i) => ($(i).onchange = calc)); calc();
+    const calc = () => { const r = H.buildLeads(rows, $('#cn').value, $('#cp').value, { project: $('#cj').value, source: $('#cs').value, budget: $('#cb').value, society: $('#cso').value, area: $('#car').value }); $('#sum').innerHTML = `Valid unique numbers: <b>${r.leads.length}</b> · Invalid/blank: ${r.invalid} · Duplicates in file: ${r.dupInFile}`; return r; };
+    ['#cn', '#cp', '#cj', '#cs', '#cb', '#cso', '#car'].forEach((i) => ($(i).onchange = calc)); calc();
     $('#imp').onclick = async () => {
       if (!$('#cp').value) return toast('Choose the phone column');
       const r = calc(); $('#imp').disabled = true;
