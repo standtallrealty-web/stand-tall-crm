@@ -20,6 +20,11 @@ const OUTCOMES = [
   { k: 'not_interested', l: 'Not interested', t: 'cold', fu: false },
   { k: 'wrong_number', l: 'Wrong number', t: null, fu: false },
 ];
+const TARGET_DIAL = 450, TARGET_CONN = 100;
+const REASONS = {
+  not_interested: ['Already purchased', 'Not looking to buy now', 'Budget too low', 'Different location / area', 'Already dealing with another agent', 'Only wants ready-to-move', 'Rude / asked not to call again', 'Other'],
+  wrong_number: ['Number does not exist', 'Wrong person / not the owner', 'Switched off / not reachable', 'Other'],
+};
 const BRAND = { name: 'Stand Tall Realty', slogan: 'Where Your Dreams Stand Tall', site: 'standtallrealty.com', phone: '9920079048', addr: 'Unity Splendour, Salunke Vihar Rd, Borade Nagar, Wanowrie, Pune 411040' };
 const logoSvg = (px) => `<img src="mark.png" width="${px}" height="${px}" alt="" style="border-radius:10px;display:block">`;
 const footerHtml = () => `<div class="brandfoot"><b>${BRAND.name}</b><div>${BRAND.slogan}</div><div><a href="https://${BRAND.site}" target="_blank" rel="noopener">${BRAND.site}</a> · <a href="tel:+91${BRAND.phone}">${BRAND.phone}</a></div></div>`;
@@ -111,21 +116,24 @@ async function logout() {
 // ---------- shell ----------
 function renderShell() {
   const tabs = isAdmin()
-    ? [['dash', '📊', 'Dashboard'], ['import', '⬆️', 'Import'], ['dist', '🔀', 'Distribute'], ['leads', '👥', 'All leads'], ['team', '🧑‍💼', 'Team'], ['proj', '🏢', 'Projects']]
+    ? [['dash', '📊', 'Dashboard'], ['import', '⬆️', 'Import'], ['dist', '🔀', 'Distribute'], ['leads', '👥', 'All leads'], ['disp', '🗂️', 'Disposed'], ['team', '🧑‍💼', 'Team'], ['proj', '🏢', 'Projects']]
     : [['today', '📞', 'Today'], ['leads', '👥', 'My leads'], ['stats', '📊', 'Stats']];
   $('#app').innerHTML = `
   <header class="top"><div class="hb">${logoSvg(40)}<div><b>STAND TALL <em>REALTY</em></b><small>${isAdmin() ? 'Admin' : esc(S.profile.full_name || S.profile.email) + (S.profile.agent_code ? ' · ' + esc(S.profile.agent_code) : '')}</small></div></div>
   <div style="display:flex;gap:8px"><button id="bell" title="Reminders">🔔</button><button id="pw" title="Change password">🔑</button><button id="lo">Logout</button></div></header>
+  <div id="clock" style="text-align:center;font-size:13px;font-weight:600;padding:4px 0;color:#555"></div>
   <div id="pushbar"></div>
   <main id="view"></main>
   ${footerHtml()}
   <nav class="bottom">${tabs.map(([k, ic, l]) => `<button data-t="${k}" class="${S.tab === k ? 'on' : ''}"><span>${ic}</span>${l}${k === 'today' && S.dueCount ? `<i class="badge">${S.dueCount}</i>` : ''}</button>`).join('')}</nav>`;
+  const tick = () => { const c = $('#clock'); if (c) c.textContent = '🕒 ' + new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) + ' IST'; };
+  tick(); clearInterval(window._clk); window._clk = setInterval(tick, 15000);
   $('#lo').onclick = logout;
   $('#bell').onclick = onBell;
   $('#pw').onclick = openChangePassword;
   renderPushBar();
   document.querySelectorAll('nav.bottom button').forEach((b) => (b.onclick = () => { S.tab = b.dataset.t; renderShell(); }));
-  const v = { today: viewToday, leads: viewLeads, stats: viewDash, dash: viewDash, import: viewImport, dist: viewDist, team: viewTeam, proj: viewProjects }[S.tab];
+  const v = { today: viewToday, leads: viewLeads, stats: viewDash, dash: viewDash, import: viewImport, dist: viewDist, team: viewTeam, disp: viewDisposed, proj: viewProjects }[S.tab];
   v($('#view'));
 }
 const refresh = () => renderShell();
@@ -267,13 +275,16 @@ const LEAD_SELECT = '*, agent:profiles!assigned_to(full_name,agent_code)';
 async function viewToday(el) {
   el.innerHTML = '<div class="empty">Loading…</div>';
   const me = S.profile.id;
-  const [due, fresh, today, online, files] = await Promise.all([
+  const [due, fresh, today, online, files, ds] = await Promise.all([
     sb.from('leads').select(LEAD_SELECT).eq('assigned_to', me).lte('next_followup', endOfToday().toISOString()).order('next_followup').limit(200),
     sb.from('leads').select('id', { count: 'exact', head: true }).eq('assigned_to', me).eq('status', 'new'),
     sb.from('calls').select('id', { count: 'exact', head: true }).eq('agent_id', me).gte('called_at', startOfToday().toISOString()),
     sb.from('leads').select(LEAD_SELECT).eq('assigned_to', me).eq('batch', 'auto').eq('status', 'new').eq('call_count', 0).order('assigned_at', { ascending: false }).limit(50),
     sb.rpc('my_files'),
+    sb.rpc('day_stats', { p_since: startOfToday().toISOString() }),
   ]);
+  const mine = (ds.data || []).find((x) => x.agent_id === me) || {};
+  const dialed = Number(mine.dialed || 0), conn = Number(mine.connected || 0);
   const onl = online.data || [];
   const fl = (files.data || []).filter((x) => Number(x.total) > 0).slice(0, 4);
   const leads = due.data || [];
@@ -281,7 +292,11 @@ async function viewToday(el) {
   const badge = $('nav.bottom button[data-t="today"]');
   if (badge && !badge.querySelector('.badge') && leads.length) badge.insertAdjacentHTML('beforeend', `<i class="badge">${leads.length}</i>`);
   el.innerHTML = `
-  <div class="grid"><div class="stat"><b>${today.count || 0}</b><small>Calls today</small></div><div class="stat"><b>${fresh.count || 0}</b><small>New leads left</small></div></div>
+  <div class="card" style="text-align:center"><div class="note">Today's target: ${TARGET_CONN} connected calls</div>
+    <div style="font-size:44px;font-weight:800;line-height:1.1">${Math.max(0, TARGET_CONN - conn)}</div><div class="note">${conn >= TARGET_CONN ? '🎉 Target done! Keep going' : 'connected calls left'}</div>
+    <div style="height:8px;background:#e8edf3;border-radius:6px;margin:8px 0;overflow:hidden"><div style="height:8px;width:${Math.min(100, conn)}%;background:#2e9e63"></div></div>
+    <div class="note">Connected ${conn}/${TARGET_CONN} · Dialed ${dialed}/${TARGET_DIAL} minimum</div></div>
+  <div class="grid"><div class="stat"><b>${dialed}</b><small>Calls dialed today</small></div><div class="stat"><b>${fresh.count || 0}</b><small>New leads left</small></div></div>
   ${fl.length ? `<h2>📁 My calling files</h2>${fl.map((x) => { const t = Number(x.total), c = Number(x.called), pct = t ? Math.round((c / t) * 100) : 0; return `<div class="card"><b>${esc(x.batch)}</b><div class="note">${c} called · ${t - c} left of ${t}</div><div style="height:8px;background:#e8edf3;border-radius:6px;margin-top:6px;overflow:hidden"><div style="height:8px;width:${pct}%;background:var(--green,#2e9e63)"></div></div></div>`; }).join('')}` : ''}
   ${onl.length ? `<h2>📣 New online leads (${onl.length}) · call these first</h2>${onl.map(leadCard).join('')}` : ''}
   <button class="btn gold block" id="next">▶ Call next new lead</button>
@@ -452,6 +467,7 @@ function openDisposition(lead) {
     <label>Outcome</label><div class="chips" id="oc">${OUTCOMES.map((o) => `<button class="chip" data-k="${o.k}">${o.l}</button>`).join('')}</div>
     <label>Project discussed</label>${projectPicker('dp', lead.project)}
     <label>Lead temperature</label><div class="chips" id="tp">${['cold', 'warm', 'hot'].map((t) => `<button class="chip ${t} ${t === st.temp ? 'on' : ''}" data-k="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div>
+    <div id="rsw" style="display:none"><label>Reason (required)</label><div class="chips" id="rs"></div><input id="rso" type="text" placeholder="Type the reason" style="display:none;margin-top:6px"></div>
     <div id="fuw" style="display:none"><label>Follow-up / reminder</label><input id="fu" type="datetime-local"></div>
     <label>What was discussed (optional)</label><textarea id="nt" placeholder="You can leave this blank"></textarea>
     <div class="row" style="margin-top:12px"><button class="btn" id="sv">Save</button><button class="btn gold" id="sn">Save &amp; call next</button></div>
@@ -465,8 +481,19 @@ function openDisposition(lead) {
       st.temp = o.t;
       document.querySelectorAll('#tp .chip').forEach((c) => c.classList.toggle('on', c.dataset.k === st.temp));
     }
+    st.reason = '';
+    const rl = REASONS[st.outcome];
+    $('#rsw').style.display = rl ? 'block' : 'none';
+    $('#rso').style.display = 'none';
+    if (rl) $('#rs').innerHTML = rl.map((r) => `<button class="chip" data-k="${esc(r)}">${esc(r)}</button>`).join('');
     $('#fuw').style.display = o.fu ? 'block' : 'none';
     if (o.fu && !$('#fu').value) $('#fu').value = localInput(tomorrow11());
+  };
+  $('#rs').onclick = (e) => {
+    const b = e.target.closest('.chip'); if (!b) return;
+    st.reason = b.dataset.k;
+    document.querySelectorAll('#rs .chip').forEach((c) => c.classList.toggle('on', c === b));
+    $('#rso').style.display = st.reason === 'Other' ? 'block' : 'none';
   };
   $('#tp').onclick = (e) => {
     const b = e.target.closest('.chip'); if (!b) return;
@@ -476,9 +503,14 @@ function openDisposition(lead) {
   const save = async (next) => {
     if (!st.outcome) return toast('Please choose an outcome');
     const o = OUTCOMES.find((x) => x.k === st.outcome);
+    let reason = null;
+    if (REASONS[st.outcome]) {
+      reason = st.reason === 'Other' ? $('#rso').value.trim() : st.reason;
+      if (!reason) return toast('Please choose a reason');
+    }
     const fu = o.fu && $('#fu').value ? new Date($('#fu').value).toISOString() : null;
     const { error } = await sb.from('calls').insert({
-      lead_id: lead.id, agent_id: S.profile.id, outcome: st.outcome, temperature: st.temp,
+      lead_id: lead.id, agent_id: S.profile.id, outcome: st.outcome, temperature: st.temp, reason,
       note: $('#nt').value.trim() || null, followup_at: fu, ...readProject('dp'),
     });
     if (error) return toast(error.message);
@@ -497,7 +529,8 @@ function openDisposition(lead) {
 // ---------- Dashboard / stats ----------
 async function viewDash(el) {
   el.innerHTML = '<div class="empty">Loading…</div>';
-  const [ls, cs] = await Promise.all([sb.rpc('lead_stats'), sb.rpc('call_stats', { p_since: startOfToday().toISOString() })]);
+  const [ls, cs, dsr] = await Promise.all([sb.rpc('lead_stats'), sb.rpc('call_stats', { p_since: startOfToday().toISOString() }), sb.rpc('day_stats', { p_since: startOfToday().toISOString() })]);
+  const dsx = dsr.data || [];
   if (ls.error) return (el.innerHTML = `<div class="empty">${esc(ls.error.message)}</div>`);
   const rows = ls.data || [], calls = cs.data || [];
   const agg = (id) => {
@@ -525,8 +558,8 @@ async function viewDash(el) {
   const ag = S.agents.filter(isAgent);
   el.innerHTML = `<div class="grid"><div class="stat"><b>${total}</b><small>Total leads</small></div><div class="stat"><b>${unassigned}</b><small>Unassigned</small></div>
   <div class="stat" id="bk" style="cursor:pointer;border:1px solid #e0bb73;grid-column:span 2"><b>${rows.filter((x) => x.status === 'booked').reduce((t, x) => t + Number(x.n), 0)}</b><small>✅ Booked clients (tap to see the list)</small></div></div>
-  <div class="tablewrap"><table><tr><th>Agent</th><th>Leads</th><th>New</th><th>Calls today</th><th>Interested</th><th>Call back</th><th>Site visit</th><th>Booked</th><th>Not int.</th><th>Hot</th><th>Warm</th></tr>
-  ${ag.map((a) => { const x = agg(a.id); return `<tr><td>${esc(a.full_name || a.email)}</td><td>${x.total}</td><td>${x.new}</td><td>${x.today}</td><td>${x.interested}</td><td>${x.call_back}</td><td>${x.site_visit}</td><td>${x.booked}</td><td>${x.not_interested}</td><td>${x.hot}</td><td>${x.warm}</td></tr>`; }).join('')}</table></div>`;
+  <div class="tablewrap"><table><tr><th>Agent</th><th>Leads</th><th>New</th><th>Dialed (of ${TARGET_DIAL})</th><th>Connected (of ${TARGET_CONN})</th><th>Interested</th><th>Call back</th><th>Site visit</th><th>Booked</th><th>Not int.</th><th>Hot</th><th>Warm</th></tr>
+  ${ag.map((a) => { const x = agg(a.id); return `<tr><td>${esc(a.full_name || a.email)}</td><td>${x.total}</td><td>${x.new}</td><td>${((dsx.find((d) => d.agent_id === a.id) || {}).dialed) || 0}</td><td><b>${((dsx.find((d) => d.agent_id === a.id) || {}).connected) || 0}</b></td><td>${x.interested}</td><td>${x.call_back}</td><td>${x.site_visit}</td><td>${x.booked}</td><td>${x.not_interested}</td><td>${x.hot}</td><td>${x.warm}</td></tr>`; }).join('')}</table></div>`;
   $('#bk').onclick = goBooked;
 }
 
@@ -797,6 +830,42 @@ function openAddLead(done) {
 }
 
 // ---------- Team (admin) ----------
+async function viewDisposed(el) {
+  const f = { agent: '', range: 'today', outcome: '' };
+  const ag = S.agents.filter(isAgent);
+  el.innerHTML = `<h2>Disposed leads</h2><div class="note">Leads your agents closed as not interested or wrong number, with their reasons.</div>
+  <select id="da" style="margin-top:8px"><option value="">All agents</option>${ag.map((a) => `<option value="${a.id}">${esc(a.full_name || a.email)}</option>`).join('')}</select>
+  <div class="chips" id="dr" style="margin-top:8px">${[['today', 'Today'], ['yest', 'Yesterday'], ['week', 'Last 7 days'], ['all', 'All time']].map(([k, v]) => `<button class="chip" data-k="${k}">${v}</button>`).join('')}</div>
+  <div class="chips" id="do" style="margin-top:8px">${[['', 'Both'], ['not_interested', 'Not interested'], ['wrong_number', 'Wrong number']].map(([k, v]) => `<button class="chip" data-k="${k}">${v}</button>`).join('')}</div>
+  <div id="dsum" class="note" style="margin:8px 0"></div><div id="dl"></div>`;
+  const range = () => {
+    const t = startOfToday(), d = (n) => new Date(t.getTime() + n * 864e5);
+    return { today: [t, d(1)], yest: [d(-1), t], week: [d(-6), d(1)], all: [new Date(2020, 0, 1), d(1)] }[f.range];
+  };
+  const load = async () => {
+    document.querySelectorAll('#dr .chip').forEach((c) => c.classList.toggle('on', c.dataset.k === f.range));
+    document.querySelectorAll('#do .chip').forEach((c) => c.classList.toggle('on', c.dataset.k === f.outcome));
+    $('#dl').innerHTML = '<div class="empty">Loading…</div>';
+    const [a, b] = range();
+    const { data, error } = await sb.rpc('disposed_calls', { p_agent: f.agent || null, p_from: a.toISOString(), p_to: b.toISOString() });
+    if (error) return ($('#dl').innerHTML = `<div class="empty">${esc(error.message)}</div>`);
+    const rows = (data || []).filter((r) => !f.outcome || r.outcome === f.outcome);
+    const cnt = {}; rows.forEach((r) => { const k = r.reason || 'No reason'; cnt[k] = (cnt[k] || 0) + 1; });
+    $('#dsum').innerHTML = `<b>${rows.length}</b> disposed` + (rows.length ? ' · ' + Object.entries(cnt).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${esc(k)}: ${v}`).join(' · ') : '');
+    $('#dl').innerHTML = rows.length ? rows.map((r) => `<div class="card"><b>${esc(r.name || 'No name')}</b> · <a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>${r.place ? `<div class="note">📍 ${esc(r.place)}</div>` : ''}
+      <div style="margin-top:4px"><span class="pill cold">${STATUS[r.outcome]}</span> <b>${esc(r.reason || 'No reason given')}</b></div>
+      ${r.note ? `<div class="note">${esc(r.note)}</div>` : ''}
+      <div class="note">${esc(r.agent_name || '')} · ${fmt(r.called_at)}${r.verified_at ? ' · ✅ Verified' : ''}</div>
+      <div class="row" style="margin-top:6px">${r.verified_at ? '' : `<button class="btn ghost sm" data-v="${r.call_id}">✅ Mark verified</button>`}${r.lead_status === 'new' ? '' : `<button class="btn ghost sm" data-r="${r.lead_id}">↩ Re-open lead</button>`}</div></div>`).join('') : '<div class="empty">No disposed leads for this selection</div>';
+    el.querySelectorAll('[data-v]').forEach((b) => (b.onclick = async () => { const { error: e } = await sb.rpc('verify_call', { p_id: Number(b.dataset.v) }); if (e) return toast(e.message); toast('Verified'); load(); }));
+    el.querySelectorAll('[data-r]').forEach((b) => (b.onclick = async () => { if (!confirm('Put this lead back in the agent’s new queue?')) return; const { error: e } = await sb.rpc('reopen_lead', { p_lead: Number(b.dataset.r) }); if (e) return toast(e.message); toast('Lead re-opened'); load(); }));
+  };
+  $('#da').onchange = (e) => { f.agent = e.target.value; load(); };
+  document.querySelectorAll('#dr .chip').forEach((c) => (c.onclick = () => { f.range = c.dataset.k; load(); }));
+  document.querySelectorAll('#do .chip').forEach((c) => (c.onclick = () => { f.outcome = c.dataset.k; load(); }));
+  load();
+}
+
 async function viewTeam(el) {
   const { data } = await sb.from('profiles').select('*').order('created_at');
   S.agents = data || [];
