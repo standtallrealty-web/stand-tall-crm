@@ -626,6 +626,9 @@ async function viewDist(el) {
 }
 
 // ---------- projects ----------
+const PCATS = [['under_construction', 'Under Construction'], ['ready_to_move', 'Ready to Move'], ['resale', 'Resale'], ['rental', 'Rental'], ['commercial', 'Commercial']];
+const pcatName = (k) => (PCATS.find((c) => c[0] === k) || ['', ''])[1];
+let projCat = 'all';
 async function loadProjects() {
   const { data } = await sb.from('projects').select('*').order('name');
   S.projects = data || [];
@@ -635,7 +638,7 @@ function projectPicker(id, current) {
   const act = S.projects.filter((p) => p.active);
   const known = act.find((p) => p.name === current);
   return `<select id="${id}-s"><option value="">— Not discussed —</option>
-    ${act.map((p) => `<option value="${p.id}" ${known && known.id === p.id ? 'selected' : ''}>${esc(p.name)}${p.location ? ' · ' + esc(p.location) : ''}</option>`).join('')}
+    ${act.map((p) => `<option value="${p.id}" ${known && known.id === p.id ? 'selected' : ''}>${esc(p.name)}${p.location ? ' · ' + esc(p.location) : ''}${p.category && p.category !== 'under_construction' ? ' (' + esc(pcatName(p.category)) + ')' : ''}</option>`).join('')}
     <option value="other">Other / new project…</option></select>
     <input id="${id}-o" type="text" placeholder="Type the project name" style="display:none;margin-top:6px">`;
 }
@@ -666,10 +669,12 @@ async function viewProjects(el) {
   const suggested = [...new Set((oth || []).map((r) => r.project_other.trim()))].filter((n) => n && !names.has(n.toLowerCase()));
   el.innerHTML = `<button class="btn gold block" id="np">＋ Add project</button><button class="btn ghost block" id="mt" style="margin-top:8px">💬 WhatsApp message templates</button>
   ${suggested.length ? `<h2>Mentioned by agents (not in your list)</h2>${suggested.map((n) => `<div class="card lead"><div class="nm">${esc(n)}</div><button class="btn sm" data-add="${esc(n)}" style="flex:none">Add to list</button></div>`).join('')}` : ''}
-  <h2>Your projects (${S.projects.length})</h2>
-  ${S.projects.map((p) => `<div class="card lead" data-id="${p.id}"><div><div class="nm">${esc(p.name)}</div>
-    <div class="ph">${esc([p.location, p.property_type, p.price_range].filter(Boolean).join(' · '))}</div>
-    <div class="sub">${p.active ? 'Active' : '<span class="over">Hidden from agents</span>'}</div></div><span style="color:var(--muted)">Edit ›</span></div>`).join('') || '<div class="empty">No projects yet. Add your first one.</div>'}`;
+  <div class="chips" id="pcats" style="margin-top:14px">${[['all', 'All']].concat(PCATS).map(([k, n]) => `<button class="chip ${projCat === k ? 'on' : ''}" data-cat="${k}">${n} (${k === 'all' ? S.projects.length : S.projects.filter((p) => p.category === k).length})</button>`).join('')}</div>
+  <h2>${projCat === 'all' ? 'Your projects' : pcatName(projCat)} (${S.projects.filter((p) => projCat === 'all' || p.category === projCat).length})</h2>
+  ${S.projects.filter((p) => projCat === 'all' || p.category === projCat).map((p) => `<div class="card lead" data-id="${p.id}"><div><div class="nm">${esc(p.name)}</div>
+    <div class="ph">${esc([pcatName(p.category), p.location, p.property_type, p.price_range].filter(Boolean).join(' · '))}</div>
+    <div class="sub">${p.active ? 'Active' : '<span class="over">Hidden from agents</span>'}</div></div><span style="color:var(--muted)">Edit ›</span></div>`).join('') || '<div class="empty">No projects in this category yet.</div>'}`;
+  el.querySelectorAll('[data-cat]').forEach((b) => (b.onclick = () => { projCat = b.dataset.cat; viewProjects(el); }));
   $('#np').onclick = () => editProject(null, el);
   $('#mt').onclick = manageTemplates;
   el.querySelectorAll('[data-add]').forEach((b) => (b.onclick = () => editProject({ name: b.dataset.add, active: true }, el)));
@@ -679,7 +684,8 @@ function editProject(p, el) {
   const isNew = !p || !p.id;
   p = p || { active: true };
   openSheet(`<h3>${isNew ? 'Add project' : 'Edit project'}</h3>
-    <label>Project name</label><input id="pn" type="text" value="${esc(p.name || '')}">
+    <label>Category</label><select id="pc2">${PCATS.map(([k, n]) => `<option value="${k}" ${(p.category || (projCat !== 'all' ? projCat : 'under_construction')) === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <label>Project / listing name</label><input id="pn" type="text" value="${esc(p.name || '')}">
     <label>Location / area</label><input id="pl" type="text" value="${esc(p.location || '')}" placeholder="e.g. Kondhwa, Pune">
     <label>Type</label><input id="pt" type="text" value="${esc(p.property_type || '')}" placeholder="e.g. 1/2/3 BHK flats">
     <label>Price range</label><input id="pr" type="text" value="${esc(p.price_range || '')}" placeholder="e.g. 45L - 85L">
@@ -690,7 +696,7 @@ function editProject(p, el) {
   $('#ps').onclick = async () => {
     const name = $('#pn').value.trim();
     if (!name) return toast('Enter the project name');
-    const row = { name, location: $('#pl').value.trim() || null, property_type: $('#pt').value.trim() || null,
+    const row = { name, category: $('#pc2').value, location: $('#pl').value.trim() || null, property_type: $('#pt').value.trim() || null,
       price_range: $('#pr').value.trim() || null, details: $('#pd').value.trim() || null, active: $('#pa').checked };
     const q = isNew ? sb.from('projects').insert(row) : sb.from('projects').update(row).eq('id', p.id);
     const { error } = await q;
