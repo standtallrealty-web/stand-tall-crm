@@ -98,3 +98,6 @@ html,body{background:var(--bg)}
 .login .brandfoot b{color:var(--gold)}
 .login .brandfoot a{color:var(--gold)}
 .brandfoot b{font-family:'Lora',Georgia,serif}
+
+.chip.on{background:#14213a;color:#fff;border-color:#14213a}
+header.top button#pw,header.top button#bell{padding:6px 9px}

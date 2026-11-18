@@ -114,13 +114,14 @@ function renderShell() {
     : [['today', '📞', 'Today'], ['leads', '👥', 'My leads'], ['stats', '📊', 'Stats']];
   $('#app').innerHTML = `
   <header class="top"><div class="hb">${logoSvg(40)}<div><b>STAND TALL <em>REALTY</em></b><small>${esc(S.profile.full_name || S.profile.email)}${isAdmin() ? ' · Admin' : S.profile.agent_code ? ' · ' + esc(S.profile.agent_code) : ''}</small></div></div>
-  <div style="display:flex;gap:8px"><button id="bell" title="Reminders">🔔</button><button id="lo">Logout</button></div></header>
+  <div style="display:flex;gap:8px"><button id="bell" title="Reminders">🔔</button><button id="pw" title="Change password">🔑</button><button id="lo">Logout</button></div></header>
   <div id="pushbar"></div>
   <main id="view"></main>
   ${footerHtml()}
   <nav class="bottom">${tabs.map(([k, ic, l]) => `<button data-t="${k}" class="${S.tab === k ? 'on' : ''}"><span>${ic}</span>${l}${k === 'today' && S.dueCount ? `<i class="badge">${S.dueCount}</i>` : ''}</button>`).join('')}</nav>`;
   $('#lo').onclick = logout;
   $('#bell').onclick = onBell;
+  $('#pw').onclick = openChangePassword;
   renderPushBar();
   document.querySelectorAll('nav.bottom button').forEach((b) => (b.onclick = () => { S.tab = b.dataset.t; renderShell(); }));
   const v = { today: viewToday, leads: viewLeads, stats: viewDash, dash: viewDash, import: viewImport, dist: viewDist, team: viewTeam, proj: viewProjects }[S.tab];
@@ -168,6 +169,26 @@ function renderPushBar() {
   const b = $('#pb'); if (b) b.onclick = enablePush;
 }
 
+// ---------- account: change own password ----------
+function openChangePassword() {
+  openSheet(`<h3>Change my password</h3>
+    <label>New password (min 8 characters)</label><input id="np1" type="password" autocomplete="new-password">
+    <label>Repeat new password</label><input id="np2" type="password" autocomplete="new-password">
+    <div class="row" style="margin-top:14px"><button class="btn ghost" id="npc">Cancel</button><button class="btn gold" id="nps">Change password</button></div>`);
+  $('#npc').onclick = closeSheet;
+  $('#nps').onclick = async () => {
+    const a = $('#np1').value, b = $('#np2').value;
+    if (a.length < 8) return toast('Use at least 8 characters');
+    if (a !== b) return toast('The two passwords do not match');
+    $('#nps').disabled = true;
+    const { error } = await sb.auth.updateUser({ password: a });
+    if (error) { $('#nps').disabled = false; return toast(error.message); }
+    sb.functions.invoke('notify-admins', { body: { event: 'password_changed' } }).catch(() => {});
+    closeSheet(); toast('Password changed');
+  };
+}
+const goBooked = () => { S.preset = 'booked'; S.tab = 'leads'; renderShell(); };
+
 // ---------- lead card ----------
 function leadCard(l) {
   const when = l.next_followup ? `<span class="${new Date(l.next_followup) < new Date() ? 'over' : ''}">⏰ ${fmt(l.next_followup)}</span>` : '';
@@ -212,10 +233,12 @@ async function callNext() {
 
 // ---------- Leads list ----------
 async function viewLeads(el) {
-  const f = { q: '', status: '', temp: '', agent: '', batch: '' };
+  const f = { q: '', status: S.preset || '', temp: '', agent: '', batch: '' };
+  S.preset = null;
   el.innerHTML = `
   <button class="btn gold block sm" id="addl" style="margin-bottom:8px">＋ Add lead</button>
   <input id="q" type="text" placeholder="Search name or phone">
+  <div class="chips" id="qc" style="margin-top:8px">${[['', 'All'], ['interested', 'Interested'], ['site_visit', 'Site visit'], ['negotiation', 'Negotiation'], ['booked', '✅ Booked'], ['call_back', 'Call back']].map(([k, v]) => `<button class="chip" data-k="${k}">${v}</button>`).join('')}</div>
   <div class="row" style="margin-top:8px">
     <select id="fs"><option value="">All status</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
     <select id="ft"><option value="">All temp</option><option>hot</option><option>warm</option><option>cold</option></select>
@@ -248,7 +271,10 @@ async function viewLeads(el) {
   $('#more').onclick = () => load(false);
   let t;
   $('#q').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { f.q = e.target.value.trim(); load(true); }, 350); };
-  $('#fs').onchange = (e) => { f.status = e.target.value; load(true); };
+  const syncChips = () => { $('#fs').value = f.status; document.querySelectorAll('#qc .chip').forEach((c) => c.classList.toggle('on', c.dataset.k === f.status)); };
+  $('#fs').onchange = (e) => { f.status = e.target.value; syncChips(); load(true); };
+  document.querySelectorAll('#qc .chip').forEach((c) => (c.onclick = () => { f.status = c.dataset.k; syncChips(); load(true); }));
+  syncChips();
   $('#ft').onchange = (e) => { f.temp = e.target.value; load(true); };
   if (isAdmin()) {
     $('#fa').onchange = (e) => { f.agent = e.target.value; load(true); };
@@ -315,7 +341,7 @@ async function openLead(l) {
     <button class="btn ghost block sm" id="logm">Log a call manually</button>
     ${isAdmin() ? `<label>Reassign to</label><select id="reas"><option value="">Unassigned</option>${S.agents.filter(isAgent).map((a) => `<option value="${a.id}" ${a.id === l.assigned_to ? 'selected' : ''}>${esc(a.full_name || a.email)}</option>`).join('')}</select>` : ''}
     <h2>History</h2>
-    ${(hist || []).length ? hist.map((c) => `<div class="hist"><b>${STATUS[c.outcome]}</b> ${c.temperature ? `<span class="pill ${c.temperature}">${c.temperature}</span>` : ''}<br>${c.note ? esc(c.note) + '<br>' : ''}<small>${fmt(c.called_at)} · ${esc(c.by ? c.by.full_name : '')}${c.followup_at ? ' · follow-up ' + fmt(c.followup_at) : ''}</small></div>`).join('') : '<div class="note">No calls yet</div>'}
+    ${(hist || []).length ? hist.map((c) => `<div class="hist"><b>${STATUS[c.outcome]}</b> ${c.temperature ? `<span class="pill ${c.temperature}">${c.temperature}</span>` : ''}<br>${c.note ? esc(c.note) + '<br>' : ''}<small>${fmt(c.called_at)} · ${esc(c.by ? c.by.full_name : (c.agent_name || 'Former agent'))}${c.followup_at ? ' · follow-up ' + fmt(c.followup_at) : ''}</small></div>`).join('') : '<div class="note">No calls yet</div>'}
     ${isAdmin() ? '<button class="btn red block sm" style="margin-top:12px" id="dl">🗑 Delete this lead</button>' : ''}
     <button class="btn ghost block" style="margin-top:12px" id="cl">Close</button>`);
   $('#cl').onclick = closeSheet;
@@ -418,15 +444,18 @@ async function viewDash(el) {
     el.innerHTML = `<div class="grid">
       <div class="stat"><b>${a.total}</b><small>My leads</small></div><div class="stat"><b>${a.today}</b><small>Calls today</small></div>
       <div class="stat"><b>${a.new}</b><small>Not called yet</small></div><div class="stat"><b>${a.interested}</b><small>Interested</small></div>
-      <div class="stat"><b>${a.hot}</b><small>Hot</small></div><div class="stat"><b>${a.warm}</b><small>Warm</small></div>
+      <div class="stat" id="bk" style="cursor:pointer;border:1px solid #e0bb73"><b>${a.booked}</b><small>✅ Booked clients</small></div><div class="stat"><b>${a.hot}</b><small>Hot</small></div><div class="stat"><b>${a.warm}</b><small>Warm</small></div>
       <div class="stat"><b>${a.call_back}</b><small>Call back</small></div><div class="stat"><b>${a.site_visit}</b><small>Site visits</small></div></div>`;
+    $('#bk').onclick = goBooked;
     return;
   }
   const unassigned = agg(null).total, total = rows.reduce((s, x) => s + Number(x.n), 0);
   const ag = S.agents.filter(isAgent);
-  el.innerHTML = `<div class="grid"><div class="stat"><b>${total}</b><small>Total leads</small></div><div class="stat"><b>${unassigned}</b><small>Unassigned</small></div></div>
+  el.innerHTML = `<div class="grid"><div class="stat"><b>${total}</b><small>Total leads</small></div><div class="stat"><b>${unassigned}</b><small>Unassigned</small></div>
+  <div class="stat" id="bk" style="cursor:pointer;border:1px solid #e0bb73;grid-column:span 2"><b>${rows.filter((x) => x.status === 'booked').reduce((t, x) => t + Number(x.n), 0)}</b><small>✅ Booked clients (tap to see the list)</small></div></div>
   <div class="tablewrap"><table><tr><th>Agent</th><th>Leads</th><th>New</th><th>Calls today</th><th>Interested</th><th>Call back</th><th>Site visit</th><th>Booked</th><th>Not int.</th><th>Hot</th><th>Warm</th></tr>
   ${ag.map((a) => { const x = agg(a.id); return `<tr><td>${esc(a.full_name || a.email)}</td><td>${x.total}</td><td>${x.new}</td><td>${x.today}</td><td>${x.interested}</td><td>${x.call_back}</td><td>${x.site_visit}</td><td>${x.booked}</td><td>${x.not_interested}</td><td>${x.hot}</td><td>${x.warm}</td></tr>`; }).join('')}</table></div>`;
+  $('#bk').onclick = goBooked;
 }
 
 // ---------- Import (admin) ----------
@@ -641,17 +670,14 @@ async function viewTeam(el) {
   el.innerHTML = `<button class="btn gold block" id="nu">＋ Add new user</button><h2>Team (${S.agents.length})</h2>
   ${S.agents.map((u) => `<div class="card lead"><div><div class="nm">${esc(u.full_name || u.email)}</div><div class="ph">${esc(u.email)}${u.phone ? ' · ' + esc(u.phone) : ''}</div>
     <div class="sub">${u.role === 'admin' ? 'Admin' : 'Agent'}${u.agent_code ? ' · ' + esc(u.agent_code) : ''} · ${u.active ? 'Active' : '<span class="over">Inactive</span>'}</div></div>
-    ${u.id === S.profile.id ? '' : `<button class="btn sm ${u.active ? 'red' : 'green'}" data-id="${u.id}" data-a="${u.active ? 0 : 1}" style="flex:none">${u.active ? 'Deactivate' : 'Activate'}</button>`}</div>`).join('')}
-  <div class="note">Deactivated users cannot log in; their leads stay safe and can be taken back in Distribute.</div>`;
-  el.querySelectorAll('button[data-id]').forEach((b) => (b.onclick = async () => {
-    const { error } = await sb.from('profiles').update({ active: b.dataset.a === '1' }).eq('id', b.dataset.id);
-    if (error) return toast(error.message); viewTeam(el);
-  }));
+    <button class="btn ghost sm" data-m="${u.id}" style="flex:none">Manage</button></div>`).join('')}
+  <div class="note">Blocked users cannot log in; their leads stay safe and can be taken back in Distribute.</div>`;
+  el.querySelectorAll('button[data-m]').forEach((b) => (b.onclick = () => manageUser(S.agents.find((x) => x.id === b.dataset.m), el)));
   $('#nu').onclick = () => {
     openSheet(`<h3>Add new user</h3>
       <label>Full name</label><input id="un" type="text">
       <label>Email (used to log in)</label><input id="ue" type="email" autocapitalize="none">
-      <label>Password (min 6 characters)</label><input id="up" type="text" autocapitalize="none">
+      <label>Password (min 8 characters)</label><input id="up" type="text" autocapitalize="none">
       <label>Phone (optional)</label><input id="uph" type="text" inputmode="tel">
       <label>Role</label><select id="ur"><option value="agent">Agent</option><option value="admin">Admin</option></select>
       <label>Agent code (optional, e.g. SI)</label><input id="uc" type="text">
@@ -659,19 +685,47 @@ async function viewTeam(el) {
     $('#uc2').onclick = closeSheet;
     $('#us').onclick = async () => {
       const email = $('#ue').value.trim(), password = $('#up').value, name = $('#un').value.trim();
-      if (!name || !email || password.length < 6) return toast('Enter name, email and a 6+ character password');
+      if (!name || !email || password.length < 8) return toast('Enter name, email and an 8+ character password');
       $('#us').disabled = true;
       // separate client so the admin stays logged in
-      const tmp = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false, storageKey: 'tmp-signup' } });
-      const { data: r, error } = await tmp.auth.signUp({ email, password });
-      if (error || !r.user) { $('#us').disabled = false; return toast(error ? error.message : 'Could not create user'); }
-      const { error: e2 } = await sb.from('profiles').update({
-        full_name: name, role: $('#ur').value, active: true, phone: $('#uph').value.trim() || null, agent_code: $('#uc').value.trim() || null,
-      }).eq('id', r.user.id);
-      if (e2) { $('#us').disabled = false; return toast(e2.message); }
+      const { data: r, error } = await sb.functions.invoke('admin-users', { body: {
+        action: 'create', email, password, full_name: name, role: $('#ur').value, phone: $('#uph').value.trim() || null, agent_code: $('#uc').value.trim() || null } });
+      if (error || !r || r.error) { $('#us').disabled = false; return toast((r && r.error) || (error && error.message) || 'Could not create user'); }
       closeSheet(); toast('User created. Share the email and password with them.'); viewTeam(el);
     };
   };
+}
+
+// ---------- admin: manage one team member ----------
+async function adminCall(body) {
+  const { data, error } = await sb.functions.invoke('admin-users', { body });
+  if (error || !data || data.error) { toast((data && data.error) || (error && error.message) || 'Failed'); return false; }
+  return true;
+}
+function manageUser(u, el) {
+  if (!u) return;
+  const me = u.id === S.profile.id;
+  openSheet(`<h3>${esc(u.full_name || u.email)}</h3><div class="ph">${esc(u.email)} · ${u.role === 'admin' ? 'Admin' : 'Agent'} · ${u.active ? 'Active' : 'Blocked'}</div>
+    <label>Set a new password for this user (min 8 characters)</label><input id="mp" type="text" autocapitalize="none">
+    <button class="btn gold block sm" id="mpb" style="margin-top:8px">Set new password</button>
+    ${me ? '<div class="note">This is your own account. Use 🔑 at the top to change your password.</div>' : `
+    <button class="btn ${u.active ? 'ghost' : 'green'} block" style="margin-top:14px" id="mb">${u.active ? '⛔ Block this user (cannot log in)' : '✅ Unblock this user'}</button>
+    <button class="btn red block" style="margin-top:8px" id="md">🗑 Delete this user permanently</button>
+    <div class="note">Their leads become Unassigned and stay safe. Their call history stays too.</div>`}
+    <button class="btn ghost block" style="margin-top:12px" id="mc">Close</button>`);
+  $('#mc').onclick = closeSheet;
+  $('#mpb').onclick = async () => {
+    const p = $('#mp').value;
+    if (p.length < 8) return toast('Use at least 8 characters');
+    if (await adminCall({ action: 'set_password', user_id: u.id, password: p })) { closeSheet(); toast('Password changed. Share it with them privately.'); }
+  };
+  if (!me) {
+    $('#mb').onclick = async () => { if (await adminCall({ action: 'set_active', user_id: u.id, active: !u.active })) { closeSheet(); toast(u.active ? 'User blocked' : 'User unblocked'); viewTeam(el); } };
+    $('#md').onclick = async () => {
+      if (window.prompt(`Delete ${u.full_name || u.email} permanently?\n\nType DELETE to confirm.`) !== 'DELETE') return toast('Cancelled');
+      if (await adminCall({ action: 'delete_user', user_id: u.id })) { closeSheet(); toast('User deleted'); viewTeam(el); }
+    };
+  }
 }
 
 boot();
